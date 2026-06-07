@@ -1,0 +1,1063 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ollama Manager</title>
+  <style>
+    :root {
+      --bg: #0d0f18;
+      --surface: #161925;
+      --surface2: #1e2233;
+      --surface3: #252a3d;
+      --border: #2a3050;
+      --border2: #333a58;
+      --text: #e2e8f0;
+      --text-muted: #7a8399;
+      --text-dim: #4a5270;
+      --accent: #6366f1;
+      --accent-dim: rgba(99,102,241,0.15);
+      --green: #10b981;
+      --green-dim: rgba(16,185,129,0.12);
+      --yellow: #f59e0b;
+      --yellow-dim: rgba(245,158,11,0.12);
+      --red: #ef4444;
+      --red-dim: rgba(239,68,68,0.12);
+      --blue: #3b82f6;
+      --blue-dim: rgba(59,130,246,0.12);
+      --purple: #a855f7;
+      --purple-dim: rgba(168,85,247,0.12);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      height: 56px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .logo { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; letter-spacing: -0.3px; }
+    .logo-icon { width: 28px; height: 28px; background: var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+    .main-status { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--text-muted); }
+
+    /* ── Dots ── */
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: var(--green); }
+    .dot-yellow { background: var(--yellow); }
+    .dot-red    { background: var(--red); }
+    .dot-blue   { background: var(--blue); }
+    .dot-muted  { background: var(--text-dim); }
+    .dot-pulse  { animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+    /* ── Badges ── */
+    .badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: 0.3px; }
+    .badge-running  { background: var(--green-dim);  color: var(--green); }
+    .badge-loading  { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-pulling  { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-starting { background: var(--yellow-dim); color: var(--yellow); }
+    .badge-ready    { background: var(--accent-dim); color: var(--accent); }
+    .badge-stopped  { background: rgba(255,255,255,.05); color: var(--text-muted); }
+    .badge-error    { background: var(--red-dim);    color: var(--red); }
+    .badge-external { background: var(--purple-dim); color: var(--purple); }
+
+    /* ── Buttons ── */
+    .btn { display: inline-flex; align-items: center; gap: 5px; padding: 7px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 500; cursor: pointer; transition: background .15s, opacity .15s; white-space: nowrap; }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-primary   { background: var(--accent); color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #5254d0; }
+    .btn-secondary { background: var(--surface3); color: var(--text); border: 1px solid var(--border2); }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn-danger    { background: transparent; color: var(--red); border: 1px solid rgba(239,68,68,.4); }
+    .btn-danger:hover:not(:disabled) { background: var(--red-dim); }
+    .btn-ghost     { background: transparent; color: var(--text-muted); border: 1px solid var(--border); }
+    .btn-ghost:hover:not(:disabled) { background: var(--surface3); color: var(--text); }
+    .btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+
+    /* ── Layout ── */
+    main { padding: 24px; max-width: 1400px; margin: 0 auto; }
+    .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+    .toolbar-left { display: flex; align-items: center; gap: 8px; }
+    .toolbar-title { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+    .instance-count { background: var(--surface3); color: var(--text-muted); padding: 2px 8px; border-radius: 10px; font-size: 12px; }
+    .divider { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+
+    /* ── Cards ── */
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; transition: border-color .2s; }
+    .card[data-status="running"]  { border-color: rgba(16,185,129,.25); }
+    .card[data-status="loading"]  { border-color: rgba(245,158,11,.25); }
+    .card[data-status="starting"] { border-color: rgba(245,158,11,.2); }
+    .card[data-status="error"]    { border-color: rgba(239,68,68,.3); }
+    .card.external                { border-color: rgba(168,85,247,.2); }
+
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 14px; }
+    .card-port { font-size: 26px; font-weight: 800; letter-spacing: -1px; line-height: 1; }
+    .card-pid  { font-size: 11px; color: var(--text-dim); margin-top: 3px; font-family: monospace; }
+
+    .info-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+    .info-table td { padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
+    .info-table tr:last-child td { border-bottom: none; }
+    .info-table .label { color: var(--text-muted); width: 72px; }
+    .info-table .value { text-align: right; font-weight: 500; }
+    .model-value { color: var(--accent); font-family: monospace; font-size: 12px; }
+    .detail-value { color: var(--text-muted); font-size: 11px; font-family: monospace; }
+
+    /* ── Card actions ── */
+    .card-actions { display: flex; flex-direction: column; gap: 7px; }
+    .action-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .action-row.right { justify-content: flex-end; }
+
+    .model-select { flex: 1; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 5px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; min-width: 0; }
+    .model-select:focus { outline: none; border-color: var(--accent); }
+
+    .error-msg { font-size: 11px; color: var(--red); padding: 5px 8px; background: var(--red-dim); border-radius: 6px; word-break: break-all; margin-bottom: 8px; }
+
+    /* ── Spinner ── */
+    .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .65s linear infinite; flex-shrink: 0; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Empty state ── */
+    .empty { grid-column: 1 / -1; text-align: center; padding: 64px 20px; color: var(--text-muted); }
+    .empty-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty h3 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+    .empty p  { font-size: 13px; margin-bottom: 24px; }
+
+    /* ── Overlay / Modal ── */
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.65); backdrop-filter: blur(3px); z-index: 50; align-items: center; justify-content: center; }
+    .overlay.open { display: flex; }
+    .modal { background: var(--surface); border: 1px solid var(--border2); border-radius: 16px; padding: 28px; width: 460px; max-width: calc(100vw - 32px); animation: pop .15s ease; }
+    .modal.wide { width: 680px; }
+    .modal.tall { max-height: calc(100vh - 48px); display: flex; flex-direction: column; }
+    @keyframes pop { from { transform: scale(.96); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    .modal h3 { font-size: 16px; font-weight: 700; margin-bottom: 20px; flex-shrink: 0; }
+    .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; flex-shrink: 0; }
+
+    /* ── Form ── */
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .form-input { width: 100%; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 14px; }
+    .form-input:focus { outline: none; border-color: var(--accent); }
+    .form-select { width: 100%; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 14px; cursor: pointer; }
+    .form-select:focus { outline: none; border-color: var(--accent); }
+    .form-textarea { width: 100%; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 9px 12px; border-radius: 8px; font-size: 13px; resize: vertical; font-family: monospace; min-height: 80px; }
+    .form-textarea:focus { outline: none; border-color: var(--accent); }
+    .form-help { color: var(--text-muted); font-size: 11px; line-height: 1.45; margin-top: 7px; }
+    .inline-row { display: flex; gap: 8px; align-items: center; }
+    .inline-row .form-input { flex: 1; }
+    .load-status { display: none; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 12px; border: 1px solid rgba(245,158,11,.35); background: var(--yellow-dim); color: var(--yellow); border-radius: 10px; font-size: 12px; line-height: 1.45; }
+    .load-status.show { display: flex; }
+    .load-status .spinner { width: 14px; height: 14px; margin-top: 1px; }
+    .load-status strong { color: var(--text); }
+
+    /* ── Slider row ── */
+    .slider-row { display: flex; align-items: center; gap: 10px; }
+    .slider-row input[type=range] { flex: 1; accent-color: var(--accent); }
+    .slider-val { background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 3px 8px; border-radius: 6px; font-size: 12px; font-family: monospace; width: 58px; text-align: center; }
+
+    /* ── Settings grid ── */
+    .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+    .settings-grid .form-group.full { grid-column: 1 / -1; }
+
+    /* ── Chat modal ── */
+    .chat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; flex-shrink: 0; }
+    .chat-meta { font-size: 12px; color: var(--text-muted); }
+    .chat-log { flex: 1; overflow-y: auto; padding: 4px 0; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+    .msg { display: flex; flex-direction: column; gap: 4px; max-width: 90%; }
+    .msg.user { align-self: flex-end; align-items: flex-end; }
+    .msg.assistant { align-self: flex-start; align-items: flex-start; }
+    .msg-role { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--text-dim); font-weight: 600; }
+    .msg-bubble { padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+    .msg.user .msg-bubble { background: var(--accent-dim); border: 1px solid rgba(99,102,241,.3); color: var(--text); border-radius: 12px 12px 4px 12px; }
+    .msg.assistant .msg-bubble { background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 12px 12px 12px 4px; }
+    .msg.assistant .msg-bubble code { background: rgba(0,0,0,.3); padding: 1px 5px; border-radius: 3px; font-family: monospace; font-size: 12px; }
+    .chat-empty { color: var(--text-dim); font-size: 13px; text-align: center; padding: 40px 0; }
+    .chat-input-row { display: flex; gap: 8px; align-items: flex-end; margin-top: 14px; flex-shrink: 0; }
+    .chat-input { flex: 1; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 9px 12px; border-radius: 10px; font-size: 13px; resize: none; font-family: inherit; min-height: 42px; max-height: 120px; overflow-y: auto; line-height: 1.5; }
+    .chat-input:focus { outline: none; border-color: var(--accent); }
+    .chat-actions { display: flex; gap: 8px; justify-content: space-between; margin-top: 10px; flex-shrink: 0; }
+
+    /* ── Logs ── */
+    .logs-box { background: #0a0c13; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11.5px; line-height: 1.6; color: #9bb3c8; max-height: 360px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; flex: 1; }
+
+    /* ── Toast ── */
+    #toast { position: fixed; bottom: 24px; right: 24px; padding: 11px 18px; border-radius: 10px; font-size: 13px; font-weight: 500; z-index: 200; opacity: 0; transform: translateY(8px); transition: opacity .2s, transform .2s; pointer-events: none; }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.success { background: var(--green-dim); border: 1px solid rgba(16,185,129,.4); color: var(--green); }
+    #toast.error   { background: var(--red-dim);   border: 1px solid rgba(239,68,68,.4);  color: var(--red); }
+    #toast.info    { background: var(--accent-dim); border: 1px solid rgba(99,102,241,.4); color: var(--accent); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">🦙</div>
+    Ollama Manager
+  </div>
+  <div class="main-status" id="mainStatus">
+    <span class="dot dot-muted"></span>
+    <span>checking…</span>
+  </div>
+</header>
+
+<main>
+  <div class="toolbar">
+    <div class="toolbar-left">
+      <span class="toolbar-title">Instances</span>
+      <span class="instance-count" id="instanceCount">0</span>
+    </div>
+    <button class="btn btn-primary" onclick="openNewModal()">+ New Instance</button>
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<!-- ── New Instance Modal ── -->
+<div class="overlay" id="newModal">
+  <div class="modal">
+    <h3>New Instance</h3>
+    <div class="form-group">
+      <label class="form-label">Port</label>
+      <input class="form-input" type="number" id="newPort" placeholder="auto-select" min="1024" max="65535">
+    </div>
+    <div class="form-group">
+      <label class="form-label">Model (optional)</label>
+      <select class="form-select" id="newModel">
+        <option value="">— load later —</option>
+      </select>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="closeModal('newModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitNewInstance()">Launch</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Load Model Modal ── -->
+<div class="overlay" id="loadModal">
+  <div class="modal">
+    <h3>Load Model</h3>
+    <input type="hidden" id="loadPort">
+    <div class="form-group">
+      <label class="form-label">Model</label>
+      <select class="form-select" id="loadModel" onchange="updateLoadModelInfo()">
+        <option value="">Select a model</option>
+      </select>
+      <div class="form-help" id="loadModelInfo">Choose a model installed on this port or pull one first.</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Pull custom model</label>
+      <div class="inline-row">
+        <input class="form-input" id="pullModelName" placeholder="e.g. llama3.2:3b or namespace/model:tag">
+        <button class="btn btn-secondary" id="pullBtn" onclick="submitPullModel()">↓ Pull</button>
+      </div>
+      <div class="form-help">Models marked “needs pull” are not installed on the selected target port.</div>
+    </div>
+    <div class="load-status" id="loadStatus" role="status" aria-live="polite"></div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" id="loadCancelBtn" onclick="closeModal('loadModal')">Cancel</button>
+      <button class="btn btn-primary" id="loadBtn" onclick="submitLoadModel()">Load</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings Modal ── -->
+<div class="overlay" id="settingsModal">
+  <div class="modal wide">
+    <h3>Settings — Port <span id="settingsPort"></span></h3>
+    <input type="hidden" id="settingsPortVal">
+
+    <div class="settings-grid">
+      <div class="form-group">
+        <label class="form-label">Temperature</label>
+        <div class="slider-row">
+          <input type="range" id="s_temperature" min="0" max="2" step="0.05" oninput="syncSlider('temperature')">
+          <input class="slider-val" type="number" id="sv_temperature" min="0" max="2" step="0.05" oninput="syncSliderInput('temperature')">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Top P</label>
+        <div class="slider-row">
+          <input type="range" id="s_top_p" min="0" max="1" step="0.05" oninput="syncSlider('top_p')">
+          <input class="slider-val" type="number" id="sv_top_p" min="0" max="1" step="0.05" oninput="syncSliderInput('top_p')">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Top K</label>
+        <div class="slider-row">
+          <input type="range" id="s_top_k" min="1" max="100" step="1" oninput="syncSlider('top_k')">
+          <input class="slider-val" type="number" id="sv_top_k" min="1" max="100" step="1" oninput="syncSliderInput('top_k')">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Repeat Penalty</label>
+        <div class="slider-row">
+          <input type="range" id="s_repeat_penalty" min="0.5" max="2" step="0.05" oninput="syncSlider('repeat_penalty')">
+          <input class="slider-val" type="number" id="sv_repeat_penalty" min="0.5" max="2" step="0.05" oninput="syncSliderInput('repeat_penalty')">
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Context Length</label>
+        <input class="form-input" type="number" id="sv_num_ctx" min="512" max="131072" step="512" placeholder="2048">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Seed (-1 = random)</label>
+        <input class="form-input" type="number" id="sv_seed" min="-1" placeholder="-1">
+      </div>
+      <div class="form-group full">
+        <label class="form-label">System Prompt</label>
+        <textarea class="form-textarea" id="sv_system" rows="4" placeholder="You are a helpful assistant…"></textarea>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="resetSettings()">Reset Defaults</button>
+      <button class="btn btn-ghost" onclick="closeModal('settingsModal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Chat Modal ── -->
+<div class="overlay" id="chatModal">
+  <div class="modal wide tall" style="height: 620px;">
+    <div class="chat-header">
+      <div>
+        <h3 style="margin-bottom:2px">Chat</h3>
+        <div class="chat-meta" id="chatMeta"></div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+    </div>
+
+    <div class="chat-log" id="chatLog">
+      <div class="chat-empty">Send a message to start the conversation</div>
+    </div>
+
+    <div style="flex-shrink:0">
+      <div class="chat-input-row">
+        <textarea class="chat-input" id="chatInput" rows="1"
+          placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+          onkeydown="chatKeydown(event)"></textarea>
+        <button class="btn btn-primary" id="chatSendBtn" onclick="sendChat()">Send</button>
+      </div>
+      <div class="chat-actions">
+        <span class="chat-meta" id="chatStatus"></span>
+        <button class="btn btn-ghost btn-sm" onclick="closeModal('chatModal')">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Logs Modal ── -->
+<div class="overlay" id="logsModal">
+  <div class="modal wide tall" style="height: 540px;">
+    <h3>Logs — Port <span id="logsPort"></span></h3>
+    <div class="logs-box" id="logsContent">Loading…</div>
+    <div class="modal-actions">
+      <button class="btn btn-ghost" onclick="refreshLogs()">↺ Refresh</button>
+      <button class="btn btn-secondary" onclick="closeModal('logsModal')">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ── State ───────────────────────────────────────────────
+  let models = [];
+  let loadCatalog = [];
+  let currentLogsPort = null;
+  let currentChatPort = null;
+  let currentChatModel = null;
+  let chatHistories = {};   // port -> [{role, content}]
+  let chatStreaming = false;
+
+  const DEFAULT_SETTINGS = {
+    temperature: 0.8,
+    top_p: 0.9,
+    top_k: 40,
+    repeat_penalty: 1.1,
+    num_ctx: 2048,
+    seed: -1,
+    system: '',
+  };
+
+  function getSettings(port) {
+    try {
+      const s = localStorage.getItem(`ollama_settings_${port}`);
+      return s ? { ...DEFAULT_SETTINGS, ...JSON.parse(s) } : { ...DEFAULT_SETTINGS };
+    } catch { return { ...DEFAULT_SETTINGS }; }
+  }
+
+  function saveSettingsToStorage(port, settings) {
+    localStorage.setItem(`ollama_settings_${port}`, JSON.stringify(settings));
+  }
+
+  // ── Toast ────────────────────────────────────────────────
+  let toastTimer;
+  function toast(msg, type = 'info') {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = `show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.className = ''; }, 3500);
+  }
+
+  // ── Main status ───────────────────────────────────────────
+  async function checkMainStatus() {
+    const el = document.getElementById('mainStatus');
+    try {
+      const r = await fetch('http://127.0.0.1:11434/api/version', { signal: AbortSignal.timeout(2000) });
+      const d = await r.json();
+      el.innerHTML = `<span class="dot dot-green"></span><span>Ollama ${d.version || ''} · :11434</span>`;
+    } catch {
+      el.innerHTML = `<span class="dot dot-red"></span><span>Main Ollama offline</span>`;
+    }
+  }
+
+  // ── Model list ────────────────────────────────────────────
+  async function loadModels() {
+    try {
+      const r = await fetch('/api/models');
+      const d = await r.json();
+      models = (d.models || []).sort((a, b) => a.name.localeCompare(b.name));
+      updateModelSelects();
+    } catch {}
+  }
+
+  function modelLabel(m, includeAvailability = false) {
+    const size = fmtSize(m.size);
+    const tag = includeAvailability
+      ? (m.installed_on_target ? 'installed' : 'needs pull')
+      : (m.availability || 'local');
+    return `${m.name} (${size}) — ${tag}`;
+  }
+
+  function updateModelSelects() {
+    const opts = models
+      .filter(m => m.installed_on_target !== false)
+      .map(m => `<option value="${escapeAttr(m.name)}">${escapeHtml(modelLabel(m))}</option>`)
+      .join('');
+    document.getElementById('newModel').innerHTML = '<option value="">— load later —</option>' + opts;
+  }
+
+  function escapeAttr(s) {
+    return escapeHtml(String(s || '')).replace(/"/g, '&quot;');
+  }
+
+  function fmtSize(bytes) {
+    if (!bytes) return '?';
+    if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+    return (bytes / 1e6).toFixed(0) + ' MB';
+  }
+
+  // ── Poll instances ────────────────────────────────────────
+  async function poll() {
+    try {
+      const r = await fetch('/api/instances');
+      const list = await r.json();
+      renderGrid(list);
+      document.getElementById('instanceCount').textContent = list.length;
+    } catch {}
+  }
+
+  // ── Render grid ───────────────────────────────────────────
+  function renderGrid(list) {
+    const grid = document.getElementById('grid');
+    if (list.length === 0) {
+      grid.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">🦙</div>
+          <h3>No instances running</h3>
+          <p>Launch a new Ollama instance to get started</p>
+          <button class="btn btn-primary" onclick="openNewModal()">+ New Instance</button>
+        </div>`;
+      return;
+    }
+    grid.innerHTML = list.map(renderCard).join('');
+  }
+
+  function statusBadge(status) {
+    const map = {
+      running:  ['dot-green dot-pulse', 'RUNNING'],
+      loading:  ['dot-yellow dot-pulse', 'LOADING'],
+      pulling:  ['dot-yellow dot-pulse', 'PULLING'],
+      starting: ['dot-yellow dot-pulse', 'STARTING'],
+      ready:    ['dot-blue', 'READY'],
+      stopped:  ['dot-muted', 'STOPPED'],
+      error:    ['dot-red', 'ERROR'],
+    };
+    const [dotCls, label] = map[status] || ['dot-muted', status.toUpperCase()];
+    return `<span class="badge badge-${status}"><span class="dot ${dotCls}"></span>${label}</span>`;
+  }
+
+  function renderCard(inst) {
+    const { port, pid, status, loaded_model, loaded_model_size,
+            model_family, model_params, model_quant, context_length,
+            target_model, last_error, external } = inst;
+
+    const canChat   = status === 'running';
+    const canUnload = status === 'running';
+    const loading   = status === 'loading' || status === 'starting' || status === 'pulling';
+
+    // Model row
+    const modelDisplay = target_model && loading
+      ? `<span style="color:var(--yellow)"><span class="spinner"></span> loading ${escapeHtml(target_model)}…</span>`
+      : loaded_model
+        ? `<span class="model-value">${escapeHtml(loaded_model)}</span>`
+        : `<span style="color:var(--text-dim)">none</span>`;
+
+    // Detail row (family · params · quant)
+    const detailParts = [model_family, model_params, model_quant].filter(Boolean);
+    const detailRow = detailParts.length ? `
+      <tr>
+        <td class="label">Details</td>
+        <td class="value"><span class="detail-value">${detailParts.join(' · ')}</span></td>
+      </tr>` : '';
+
+    const ctxRow = context_length ? `
+      <tr>
+        <td class="label">Context</td>
+        <td class="value"><span class="detail-value">${context_length.toLocaleString()} tok</span></td>
+      </tr>` : '';
+
+    const sizeRow = loaded_model_size ? `
+      <tr>
+        <td class="label">Memory</td>
+        <td class="value"><span class="detail-value">${fmtSize(loaded_model_size)}</span></td>
+      </tr>` : '';
+
+    // Universal action row
+    const universalBtns = `
+      <div class="action-row">
+        <button class="btn btn-secondary btn-sm" onclick="openChat(${port}, '${loaded_model || ''}')"
+          ${!canChat ? 'disabled' : ''}>💬 Chat</button>
+        <button class="btn btn-ghost btn-sm" onclick="openSettings(${port})">⚙ Settings</button>
+        <button class="btn btn-ghost btn-sm" onclick="copyUrl(${port})" title="Copy API URL">📋 URL</button>
+      </div>`;
+
+    // Managed-specific actions
+    const managedBtns = external ? `
+      <div class="action-row">
+        <button class="btn btn-secondary btn-sm" onclick="openLoadModal(${port})" ${loading ? 'disabled' : ''}>
+          ${loading ? '<span class="spinner"></span>' : '↑'} Load
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="unloadModel(${port})" ${!canUnload ? 'disabled' : ''}>↓ Unload</button>
+        <span style="font-size:11px;color:var(--text-dim);margin-left:4px">◆ External</span>
+      </div>` : `
+      <div class="action-row">
+        <button class="btn btn-secondary btn-sm" onclick="openLoadModal(${port})" ${loading ? 'disabled' : ''}>
+          ${loading ? '<span class="spinner"></span>' : '↑'} Load
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="unloadModel(${port})" ${!canUnload ? 'disabled' : ''}>↓ Unload</button>
+        <button class="btn btn-ghost btn-sm" onclick="viewLogs(${port})">☰ Logs</button>
+      </div>
+      <div class="action-row right">
+        <button class="btn btn-ghost btn-sm" onclick="restartInstance(${port})">↺ Restart</button>
+        <button class="btn btn-danger btn-sm" onclick="stopInstance(${port})">■ Stop</button>
+      </div>`;
+
+    const headerBadge = external
+      ? `<span class="badge badge-external">◆ EXTERNAL</span>`
+      : statusBadge(status);
+
+    const pidLine = external
+      ? `<div class="card-pid">not managed</div>`
+      : `<div class="card-pid">PID ${pid || '—'}</div>`;
+
+    return `
+    <div class="card${external ? ' external' : ''}" data-status="${status}" data-port="${port}">
+      <div class="card-header">
+        <div>
+          <div class="card-port">:${port}</div>
+          ${pidLine}
+        </div>
+        ${headerBadge}
+      </div>
+
+      <table class="info-table">
+        <tr>
+          <td class="label">Model</td>
+          <td class="value">${modelDisplay}</td>
+        </tr>
+        ${detailRow}${ctxRow}${sizeRow}
+      </table>
+
+      ${last_error ? `<div class="error-msg">⚠ ${last_error}</div>` : ''}
+
+      <div class="card-actions">
+        ${universalBtns}
+        ${managedBtns}
+      </div>
+    </div>`;
+  }
+
+  // ── Copy URL ──────────────────────────────────────────────
+  function copyUrl(port) {
+    const url = `http://${location.hostname}:${port}`;
+    navigator.clipboard.writeText(url).then(() => toast(`Copied ${url}`, 'success'));
+  }
+
+  // ── New instance ──────────────────────────────────────────
+  function openNewModal() {
+    document.getElementById('newPort').value = '';
+    document.getElementById('newModal').classList.add('open');
+  }
+
+  async function submitNewInstance() {
+    const portVal = document.getElementById('newPort').value;
+    const model   = document.getElementById('newModel').value;
+    try {
+      const r = await fetch('/api/instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ port: portVal ? parseInt(portVal) : null, model: model || null }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      closeModal('newModal');
+      toast(`Instance :${d.port} starting…`, 'info');
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ── Load model ────────────────────────────────────────────
+  function setLoadModalBusy(isBusy, message = '') {
+    const loadBtn = document.getElementById('loadBtn');
+    const cancelBtn = document.getElementById('loadCancelBtn');
+    const pullBtn = document.getElementById('pullBtn');
+    const loadSelect = document.getElementById('loadModel');
+    const pullInput = document.getElementById('pullModelName');
+    const status = document.getElementById('loadStatus');
+
+    if (isBusy) {
+      loadBtn.disabled = true;
+      cancelBtn.disabled = true;
+      pullBtn.disabled = true;
+      loadSelect.disabled = true;
+      pullInput.disabled = true;
+      loadBtn.innerHTML = '<span class="spinner"></span> Loading';
+      status.innerHTML = `<span class="spinner"></span><span>${message}</span>`;
+      status.classList.add('show');
+    } else {
+      cancelBtn.disabled = false;
+      pullBtn.disabled = false;
+      loadSelect.disabled = false;
+      pullInput.disabled = false;
+      loadBtn.innerHTML = 'Load';
+      status.classList.remove('show');
+      status.innerHTML = '';
+      updateLoadModelInfo();
+    }
+  }
+
+  async function openLoadModal(port) {
+    document.getElementById('loadPort').value = port;
+    document.getElementById('loadModel').innerHTML = '<option value="">Loading models…</option>';
+    document.getElementById('loadModelInfo').textContent = 'Querying target port model catalog…';
+    document.getElementById('pullModelName').value = '';
+    document.getElementById('loadBtn').disabled = true;
+    document.getElementById('pullBtn').disabled = false;
+    setLoadModalBusy(false);
+    document.getElementById('loadModal').classList.add('open');
+    await refreshLoadCatalog(port);
+  }
+
+  async function refreshLoadCatalog(port) {
+    try {
+      const r = await fetch(`/api/instances/${port}/models`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed to load model catalog');
+      loadCatalog = d.models || [];
+      const opts = loadCatalog.map(m => `
+        <option value="${escapeAttr(m.name)}" data-availability="${m.availability}">
+          ${escapeHtml(modelLabel(m, true))}
+        </option>`).join('');
+      document.getElementById('loadModel').innerHTML = '<option value="">Select a model</option>' + opts;
+      updateLoadModelInfo();
+    } catch (e) {
+      loadCatalog = [];
+      document.getElementById('loadModel').innerHTML = '<option value="">No models available</option>';
+      document.getElementById('loadModelInfo').textContent = e.message;
+      toast(e.message, 'error');
+    }
+  }
+
+  function selectedLoadModel() {
+    const name = document.getElementById('loadModel').value;
+    return loadCatalog.find(m => m.name === name) || null;
+  }
+
+  function updateLoadModelInfo() {
+    const selected = selectedLoadModel();
+    const loadBtn = document.getElementById('loadBtn');
+    const pullInput = document.getElementById('pullModelName');
+    if (!selected) {
+      document.getElementById('loadModelInfo').textContent = 'Choose a model installed on this port or pull one first.';
+      loadBtn.disabled = true;
+      return;
+    }
+    pullInput.value = selected.name;
+    loadBtn.disabled = !selected.installed_on_target;
+    const ports = selected.available_ports?.length ? ` Available on ports: ${selected.available_ports.join(', ')}.` : '';
+    document.getElementById('loadModelInfo').textContent = selected.installed_on_target
+      ? `Installed on target port. Ready to load.${ports}`
+      : `Needs pull before it can load on this port.${ports}`;
+  }
+
+  async function submitPullModel() {
+    const port  = parseInt(document.getElementById('loadPort').value);
+    const model = document.getElementById('pullModelName').value.trim() || document.getElementById('loadModel').value;
+    if (!model) { toast('Enter or select a model to pull', 'error'); return; }
+    const pullBtn = document.getElementById('pullBtn');
+    pullBtn.disabled = true;
+    pullBtn.innerHTML = '<span class="spinner"></span> Pulling';
+    try {
+      const r = await fetch(`/api/instances/${port}/pull`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      toast(`Pulling ${model} on :${port}…`, 'info');
+      closeModal('loadModal');
+    } catch (e) { toast(e.message, 'error'); }
+    finally {
+      pullBtn.disabled = false;
+      pullBtn.innerHTML = '↓ Pull';
+    }
+  }
+
+  async function submitLoadModel() {
+    const port  = parseInt(document.getElementById('loadPort').value);
+    const model = document.getElementById('loadModel').value;
+    if (!model) { toast('Select a model', 'error'); return; }
+    setLoadModalBusy(true, `Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong>… This can take a moment.`);
+    try {
+      const r = await fetch(`/api/instances/${port}/load`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      toast(`Loading ${model} on :${port}…`, 'info');
+      await poll();
+      const result = await waitForLoadComplete(port, model);
+      if (!result.ok) throw new Error(result.error || `Timed out waiting for ${model} to load on :${port}`);
+      closeModal('loadModal');
+      toast(`Loaded ${model} on :${port}`, 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+      document.getElementById('loadStatus').innerHTML = `<span>⚠</span><span>${escapeHtml(e.message)}</span>`;
+      document.getElementById('loadStatus').classList.add('show');
+      document.getElementById('loadCancelBtn').disabled = false;
+    } finally {
+      const modalOpen = document.getElementById('loadModal').classList.contains('open');
+      if (modalOpen) {
+        document.getElementById('loadBtn').innerHTML = 'Load';
+        document.getElementById('loadModel').disabled = false;
+        document.getElementById('pullModelName').disabled = false;
+        document.getElementById('pullBtn').disabled = false;
+        updateLoadModelInfo();
+      }
+    }
+  }
+
+  async function waitForLoadComplete(port, model, timeoutMs = 300000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const r = await fetch('/api/instances');
+        const list = await r.json();
+        const inst = list.find(i => i.port === port);
+        if (!inst) return { ok: false, error: `Port :${port} disappeared` };
+        if (inst.last_error) return { ok: false, error: inst.last_error };
+        if (inst.loaded_model === model && inst.status === 'running') return { ok: true };
+        if (inst.status === 'loading') {
+          document.getElementById('loadStatus').innerHTML = `<span class="spinner"></span><span>Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong>… current card status is LOADING.</span>`;
+        }
+        renderGrid(list);
+        document.getElementById('instanceCount').textContent = list.length;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    return { ok: false, error: null };
+  }
+
+  // ── Unload ────────────────────────────────────────────────
+  async function unloadModel(port) {
+    try {
+      const r = await fetch(`/api/instances/${port}/unload`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      toast(`Unloaded model on :${port}`, 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ── Stop ──────────────────────────────────────────────────
+  async function stopInstance(port) {
+    if (!confirm(`Stop instance on port ${port}?`)) return;
+    try {
+      const r = await fetch(`/api/instances/${port}`, { method: 'DELETE' });
+      if (!r.ok) { const d = await r.json(); throw new Error(d.detail || 'Failed'); }
+      toast(`Stopped :${port}`, 'success');
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ── Restart ───────────────────────────────────────────────
+  async function restartInstance(port) {
+    try {
+      const r = await fetch(`/api/instances/${port}/restart`, { method: 'POST' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      toast(`Restarting :${port}…`, 'info');
+    } catch (e) { toast(e.message, 'error'); }
+  }
+
+  // ── Settings modal ────────────────────────────────────────
+  const SLIDER_FIELDS = ['temperature', 'top_p', 'top_k', 'repeat_penalty'];
+
+  function syncSlider(key) {
+    const v = document.getElementById(`s_${key}`).value;
+    document.getElementById(`sv_${key}`).value = v;
+  }
+  function syncSliderInput(key) {
+    const v = document.getElementById(`sv_${key}`).value;
+    document.getElementById(`s_${key}`).value = v;
+  }
+
+  function openSettings(port) {
+    const s = getSettings(port);
+    document.getElementById('settingsPort').textContent = port;
+    document.getElementById('settingsPortVal').value = port;
+
+    SLIDER_FIELDS.forEach(k => {
+      document.getElementById(`s_${k}`).value  = s[k];
+      document.getElementById(`sv_${k}`).value = s[k];
+    });
+    document.getElementById('sv_num_ctx').value = s.num_ctx;
+    document.getElementById('sv_seed').value    = s.seed;
+    document.getElementById('sv_system').value  = s.system;
+
+    document.getElementById('settingsModal').classList.add('open');
+  }
+
+  function saveSettings() {
+    const port = parseInt(document.getElementById('settingsPortVal').value);
+    const s = {
+      temperature:    parseFloat(document.getElementById('sv_temperature').value),
+      top_p:          parseFloat(document.getElementById('sv_top_p').value),
+      top_k:          parseInt(document.getElementById('sv_top_k').value),
+      repeat_penalty: parseFloat(document.getElementById('sv_repeat_penalty').value),
+      num_ctx:        parseInt(document.getElementById('sv_num_ctx').value) || 2048,
+      seed:           parseInt(document.getElementById('sv_seed').value) ?? -1,
+      system:         document.getElementById('sv_system').value,
+    };
+    saveSettingsToStorage(port, s);
+    closeModal('settingsModal');
+    toast('Settings saved', 'success');
+  }
+
+  function resetSettings() {
+    const port = parseInt(document.getElementById('settingsPortVal').value);
+    openSettings(port);  // Re-open with defaults replaced
+    SLIDER_FIELDS.forEach(k => {
+      document.getElementById(`s_${k}`).value  = DEFAULT_SETTINGS[k];
+      document.getElementById(`sv_${k}`).value = DEFAULT_SETTINGS[k];
+    });
+    document.getElementById('sv_num_ctx').value = DEFAULT_SETTINGS.num_ctx;
+    document.getElementById('sv_seed').value    = DEFAULT_SETTINGS.seed;
+    document.getElementById('sv_system').value  = DEFAULT_SETTINGS.system;
+  }
+
+  // ── Chat modal ────────────────────────────────────────────
+  function openChat(port, model) {
+    currentChatPort  = port;
+    currentChatModel = model;
+    document.getElementById('chatMeta').textContent = `:${port} · ${model}`;
+    document.getElementById('chatInput').value = '';
+    document.getElementById('chatStatus').textContent = '';
+    renderChatLog();
+    document.getElementById('chatModal').classList.add('open');
+    setTimeout(() => document.getElementById('chatInput').focus(), 50);
+  }
+
+  function renderChatLog() {
+    const log = document.getElementById('chatLog');
+    const history = chatHistories[currentChatPort] || [];
+    if (history.length === 0) {
+      log.innerHTML = '<div class="chat-empty">Send a message to start the conversation</div>';
+      return;
+    }
+    log.innerHTML = history.map(m => `
+      <div class="msg ${m.role}">
+        <div class="msg-role">${m.role}</div>
+        <div class="msg-bubble">${escapeHtml(m.content).replace(/`([^`]+)`/g, '<code>$1</code>')}</div>
+      </div>`).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function clearChat() {
+    chatHistories[currentChatPort] = [];
+    renderChatLog();
+  }
+
+  function chatKeydown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendChat();
+    }
+  }
+
+  async function sendChat() {
+    if (chatStreaming) return;
+    const input = document.getElementById('chatInput');
+    const text  = input.value.trim();
+    if (!text || !currentChatPort || !currentChatModel) return;
+
+    input.value = '';
+    if (!chatHistories[currentChatPort]) chatHistories[currentChatPort] = [];
+    chatHistories[currentChatPort].push({ role: 'user', content: text });
+
+    // Add placeholder assistant message
+    chatHistories[currentChatPort].push({ role: 'assistant', content: '' });
+    renderChatLog();
+
+    const settings = getSettings(currentChatPort);
+    const messages = chatHistories[currentChatPort].slice(0, -1).map(m => ({ role: m.role, content: m.content }));
+
+    const payload = {
+      model: currentChatModel,
+      messages,
+      system: settings.system || undefined,
+      options: {
+        temperature:    settings.temperature,
+        top_p:          settings.top_p,
+        top_k:          settings.top_k,
+        repeat_penalty: settings.repeat_penalty,
+        num_ctx:        settings.num_ctx,
+        ...(settings.seed !== -1 ? { seed: settings.seed } : {}),
+      },
+    };
+
+    chatStreaming = true;
+    document.getElementById('chatSendBtn').disabled = true;
+    document.getElementById('chatStatus').textContent = 'generating…';
+
+    try {
+      const r = await fetch(`/api/instances/${currentChatPort}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const reader  = r.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let full = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const data = JSON.parse(line);
+            if (data.error) throw new Error(data.error);
+            if (data.message?.content) {
+              full += data.message.content;
+              // Update last message in history
+              const hist = chatHistories[currentChatPort];
+              hist[hist.length - 1].content = full;
+              renderChatLog();
+            }
+          } catch (parseErr) {
+            if (parseErr.message !== 'Unexpected end of JSON input') {
+              throw parseErr;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      const hist = chatHistories[currentChatPort];
+      if (hist) hist[hist.length - 1].content = `[Error: ${e.message}]`;
+      renderChatLog();
+      toast(e.message, 'error');
+    } finally {
+      chatStreaming = false;
+      document.getElementById('chatSendBtn').disabled = false;
+      document.getElementById('chatStatus').textContent = '';
+    }
+  }
+
+  // ── Logs modal ────────────────────────────────────────────
+  async function viewLogs(port) {
+    currentLogsPort = port;
+    document.getElementById('logsPort').textContent = port;
+    document.getElementById('logsModal').classList.add('open');
+    await refreshLogs();
+  }
+
+  async function refreshLogs() {
+    if (!currentLogsPort) return;
+    const el = document.getElementById('logsContent');
+    try {
+      const r = await fetch(`/api/instances/${currentLogsPort}/logs?lines=120`);
+      const d = await r.json();
+      el.textContent = d.logs || '(no output yet)';
+      el.scrollTop = el.scrollHeight;
+    } catch { el.textContent = 'Failed to load logs'; }
+  }
+
+  // ── Modal helpers ─────────────────────────────────────────
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+    if (id === 'logsModal') currentLogsPort = null;
+    if (id === 'chatModal') { currentChatPort = null; currentChatModel = null; }
+  }
+
+  document.querySelectorAll('.overlay').forEach(el => {
+    el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      document.querySelectorAll('.overlay.open').forEach(el => el.classList.remove('open'));
+      currentLogsPort = null;
+    }
+  });
+
+  // ── Boot ──────────────────────────────────────────────────
+  checkMainStatus();
+  loadModels();
+  poll();
+
+  setInterval(poll, 2000);
+  setInterval(checkMainStatus, 15000);
+  setInterval(loadModels, 30000);
+</script>
+</body>
+</html>
