@@ -23,6 +23,15 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('localStorage.setItem(`ollama_ui_label_${port}`', ui)
         self.assertIn('UI Label', ui)
 
+    def test_main_status_uses_manager_backend_not_browser_localhost(self):
+        ui = self.read_ui()
+        start = ui.index('async function checkMainStatus()')
+        end = ui.index('// ── Model list', start)
+        check_main_status = ui[start:end]
+
+        self.assertIn("fetch('/api/main-status'", check_main_status)
+        self.assertNotIn('127.0.0.1:11434', check_main_status)
+
 
 if __name__ == "__main__":
     unittest.main()

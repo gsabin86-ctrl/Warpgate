@@ -730,4 +730,17 @@ async def telemetry():
     return get_system_telemetry()
 
 
+@app.get("/api/main-status")
+async def main_status():
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            r = await client.get("http://127.0.0.1:11434/api/version")
+            if r.status_code == 200:
+                data = r.json()
+                return {"online": True, "version": data.get("version"), "port": 11434}
+    except Exception:
+        pass
+    return {"online": False, "version": None, "port": 11434}
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

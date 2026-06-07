@@ -554,9 +554,10 @@
   async function checkMainStatus() {
     const el = document.getElementById('mainStatus');
     try {
-      const r = await fetch('http://127.0.0.1:11434/api/version', { signal: AbortSignal.timeout(2000) });
+      const r = await fetch('/api/main-status', { signal: AbortSignal.timeout(2000) });
       const d = await r.json();
-      el.innerHTML = `<span class="dot dot-green"></span><span>Ollama ${d.version || ''} · :11434</span>`;
+      if (!r.ok || !d.online) throw new Error('Main Ollama offline');
+      el.innerHTML = `<span class="dot dot-green"></span><span>Ollama ${d.version || ''} · :${d.port || 11434}</span>`;
     } catch {
       el.innerHTML = `<span class="dot dot-red"></span><span>Main Ollama offline</span>`;
     }
