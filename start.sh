@@ -11,5 +11,5 @@ if ! python3 -c "import fastapi" &>/dev/null; then
   pip3 install --user --break-system-packages -r requirements.txt
 fi
 
-echo "Ollama Manager running at http://localhost:8000"
+echo "Warpgate running at http://localhost:8000"
 python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload

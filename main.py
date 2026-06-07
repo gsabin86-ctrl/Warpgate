@@ -278,7 +278,7 @@ async def lifespan(app: FastAPI):
                 pass
 
 
-app = FastAPI(title="Ollama Manager", lifespan=lifespan)
+app = FastAPI(title="Warpgate", lifespan=lifespan)
 
 
 class CreateInstanceRequest(BaseModel):
