@@ -36,6 +36,12 @@ sudo systemctl status ollama-manager.service --no-pager
 
 ## Rollback hygiene
 
+See the rollback runbook:
+
+```text
+docs/rollback.md
+```
+
 This repository is intentionally committed in small rollback points:
 
 1. Baseline import of the known-working manager.
