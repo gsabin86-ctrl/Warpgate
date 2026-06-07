@@ -429,6 +429,11 @@
         <input class="form-input" type="number" id="sv_seed" min="-1" placeholder="-1">
       </div>
       <div class="form-group full">
+        <label class="form-label">UI Label</label>
+        <input class="form-input" id="sv_ui_label" maxlength="48" placeholder="Optional display name for this card/model">
+        <div class="form-help">Saved in this browser only. Leave blank to use the default port role.</div>
+      </div>
+      <div class="form-group full">
         <label class="form-label">System Prompt</label>
         <textarea class="form-textarea" id="sv_system" rows="4" placeholder="You are a helpful assistant…"></textarea>
       </div>
@@ -522,6 +527,17 @@
 
   function saveSettingsToStorage(port, settings) {
     localStorage.setItem(`ollama_settings_${port}`, JSON.stringify(settings));
+  }
+
+  function getUiLabel(port) {
+    try { return localStorage.getItem(`ollama_ui_label_${port}`) || ''; }
+    catch { return ''; }
+  }
+
+  function saveUiLabel(port, label) {
+    const clean = String(label || '').trim();
+    if (clean) localStorage.setItem(`ollama_ui_label_${port}`, clean);
+    else localStorage.removeItem(`ollama_ui_label_${port}`);
   }
 
   // ── Toast ────────────────────────────────────────────────
@@ -715,7 +731,6 @@
           ${loading ? '<span class="spinner"></span>' : '↑'} Load
         </button>
         <button class="btn btn-ghost btn-sm" onclick="unloadModel(${port})" ${!canUnload ? 'disabled' : ''}>↓ Unload</button>
-        <span class="badge badge-external" style="font-size:10px;margin-left:2px">◆ EXTERNAL</span>
       </div>` : `
       <div class="action-row">
         <button class="btn btn-secondary btn-sm" onclick="openLoadModal(${port})" ${loading ? 'disabled' : ''}>
@@ -741,7 +756,7 @@
     <div class="card${external ? ' external' : ''}" data-status="${status}" data-port="${port}">
       <div class="card-header">
         <div>
-          <div class="card-role">${escapeHtml(portRole(port))}</div>
+          <div class="card-role">${escapeHtml(getUiLabel(port) || portRole(port))}</div>
           <div class="card-port">:${port}</div>
           ${pidLine}
         </div>
@@ -1011,6 +1026,7 @@
     });
     document.getElementById('sv_num_ctx').value = s.num_ctx;
     document.getElementById('sv_seed').value    = s.seed;
+    document.getElementById('sv_ui_label').value = getUiLabel(port);
     document.getElementById('sv_system').value  = s.system;
 
     document.getElementById('settingsModal').classList.add('open');
@@ -1028,6 +1044,8 @@
       system:         document.getElementById('sv_system').value,
     };
     saveSettingsToStorage(port, s);
+    saveUiLabel(port, document.getElementById('sv_ui_label').value);
+    poll();
     closeModal('settingsModal');
     toast('Settings saved', 'success');
   }
@@ -1041,6 +1059,7 @@
     });
     document.getElementById('sv_num_ctx').value = DEFAULT_SETTINGS.num_ctx;
     document.getElementById('sv_seed').value    = DEFAULT_SETTINGS.seed;
+    document.getElementById('sv_ui_label').value = '';
     document.getElementById('sv_system').value  = DEFAULT_SETTINGS.system;
   }
 
