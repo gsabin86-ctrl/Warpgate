@@ -55,6 +55,71 @@ def get_next_port() -> int:
     return port
 
 
+def read_meminfo() -> dict[str, int]:
+    values: dict[str, int] = {}
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            key, raw = line.split(":", 1)
+            parts = raw.strip().split()
+            if parts:
+                values[key] = int(parts[0]) * 1024
+    except OSError:
+        pass
+    return values
+
+
+def count_ollama_processes() -> int:
+    count = 0
+    proc = Path("/proc")
+    try:
+        entries = list(proc.iterdir())
+    except OSError:
+        return 0
+    for entry in entries:
+        if not entry.name.isdigit():
+            continue
+        try:
+            cmdline = (entry / "cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", "ignore")
+        except OSError:
+            continue
+        if "ollama" in cmdline:
+            count += 1
+    return count
+
+
+def get_system_telemetry() -> dict:
+    mem = read_meminfo()
+    total = mem.get("MemTotal", 0)
+    available = mem.get("MemAvailable", 0)
+    used = max(total - available, 0) if total else 0
+    swap_total = mem.get("SwapTotal", 0)
+    swap_free = mem.get("SwapFree", 0)
+    swap_used = max(swap_total - swap_free, 0) if swap_total else 0
+    load1, load5, load15 = os.getloadavg()
+    cpu_count = os.cpu_count() or 1
+    return {
+        "cpu": {
+            "load_1m": load1,
+            "load_5m": load5,
+            "load_15m": load15,
+            "cores": cpu_count,
+            "load_percent": min(round((load1 / cpu_count) * 100, 1), 999.0),
+        },
+        "memory": {
+            "total": total,
+            "available": available,
+            "used": used,
+            "used_percent": round((used / total) * 100, 1) if total else None,
+        },
+        "swap": {
+            "total": swap_total,
+            "used": swap_used,
+            "used_percent": round((swap_used / swap_total) * 100, 1) if swap_total else 0,
+        },
+        "ollama_processes": count_ollama_processes(),
+    }
+
+
 def kill_orphaned_instances():
     if not INSTANCES_DIR.exists():
         return
@@ -658,6 +723,11 @@ async def get_logs(port: int, lines: int = 100):
         return {"logs": "".join(content[-lines:])}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.get("/api/telemetry")
+async def telemetry():
+    return get_system_telemetry()
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
