@@ -1,4 +1,6 @@
 import unittest
+import subprocess
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -38,6 +40,36 @@ class VoiceTTSTests(unittest.TestCase):
         self.assertIn(str(main.PIPER_VOICE), cmd)
         self.assertIn("--output_file", cmd)
         self.assertIn(str(out), cmd)
+
+    def test_tts_response_does_not_expose_local_path(self):
+        with patch.object(main, "VOICE_TTS_DIR", Path("/tmp/warpgate-test-tts")), \
+             patch.object(main, "voice_health", return_value={"piper": {"available": True}}), \
+             patch.object(main.subprocess, "run") as run:
+            def fake_run(cmd, **kwargs):
+                Path(cmd[-1]).parent.mkdir(parents=True, exist_ok=True)
+                Path(cmd[-1]).write_bytes(b"RIFFfake")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+            run.side_effect = fake_run
+
+            result = main.run_piper_tts("hello")
+
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("audio_url", result)
+        self.assertIn("bytes", result)
+        self.assertNotIn("path", result)
+
+    def test_cleanup_old_voice_files_removes_expired_tts_files(self):
+        test_dir = Path("/tmp/warpgate-test-cleanup")
+        test_dir.mkdir(parents=True, exist_ok=True)
+        old_file = test_dir / "old.wav"
+        old_file.write_bytes(b"old")
+        old_time = time.time() - 90000
+        old_file.touch()
+        import os
+        os.utime(old_file, (old_time, old_time))
+        with patch.object(main, "VOICE_TTS_DIR", test_dir):
+            main.cleanup_old_voice_files(max_age_seconds=3600)
+        self.assertFalse(old_file.exists())
 
 
 class VoiceSTTTests(unittest.TestCase):

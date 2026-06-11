@@ -19,7 +19,7 @@ Generated speech files and temporary transcription uploads live under:
 /tmp/warpgate-voice
 ```
 
-This directory is disposable and should not be committed.
+Generated TTS WAV files are kept temporarily for browser playback. Old voice files are cleaned up automatically. STT uploads and transcript files are removed after each transcription response.
 
 ## UI
 
@@ -63,7 +63,6 @@ Response:
 {
   "status": "ok",
   "audio_url": "/api/voice/audio/tts-<id>.wav",
-  "path": "/tmp/warpgate-voice/tts/tts-<id>.wav",
   "bytes": 123456
 }
 ```
@@ -124,8 +123,10 @@ curl -fsS -X POST http://127.0.0.1:8000/api/voice/stt \
 
 - Backend subprocess calls use argv lists, not `shell=True`.
 - TTS input is capped by `MAX_TTS_CHARS`.
+- Voice jobs share a small semaphore so slow subprocesses do not stampede the server.
+- Old generated voice files are cleaned up automatically.
 - STT upload size is capped by `MAX_AUDIO_UPLOAD_BYTES`.
-- Uploaded files receive generated server-side names.
+- Uploaded files receive generated server-side names and are removed after transcription.
 - Original upload filenames are not used as filesystem paths.
 - Served audio filenames are restricted to safe `.wav` names.
 

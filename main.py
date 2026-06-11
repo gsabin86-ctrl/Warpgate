@@ -6,6 +6,7 @@ import re
 import signal
 import socket
 import subprocess
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -39,6 +40,7 @@ instance_loading: set[int] = set()
 instance_pulling: set[int] = set()
 port_targets: dict[int, str | None] = {}
 port_errors: dict[int, str | None] = {}
+voice_job_semaphore = asyncio.Semaphore(2)
 
 CURATED_PULL_MODELS = [
     "llama3.2:3b",
@@ -147,12 +149,26 @@ def build_whisper_command(input_path: Path, output_base: Path) -> list[str]:
     ]
 
 
+def cleanup_old_voice_files(max_age_seconds: int = 24 * 60 * 60) -> None:
+    cutoff = time.time() - max_age_seconds
+    for directory in (VOICE_TTS_DIR, VOICE_STT_DIR):
+        if not directory.exists():
+            continue
+        for path in directory.iterdir():
+            try:
+                if path.is_file() and path.stat().st_mtime < cutoff:
+                    path.unlink(missing_ok=True)
+            except OSError:
+                continue
+
+
 def run_piper_tts(text: str) -> dict:
     health = voice_health()
     if not health["piper"]["available"]:
         raise HTTPException(status_code=503, detail="Piper voice is not available")
 
     VOICE_TTS_DIR.mkdir(parents=True, exist_ok=True)
+    cleanup_old_voice_files()
     filename = f"tts-{os.urandom(8).hex()}.wav"
     output_path = VOICE_TTS_DIR / filename
 
@@ -175,7 +191,6 @@ def run_piper_tts(text: str) -> dict:
     return {
         "status": "ok",
         "audio_url": f"/api/voice/audio/{filename}",
-        "path": str(output_path),
         "bytes": output_path.stat().st_size,
     }
 
@@ -860,7 +875,8 @@ async def api_voice_health():
 
 @app.post("/api/voice/tts")
 async def api_voice_tts(req: TTSRequest):
-    return run_piper_tts(req.text)
+    async with voice_job_semaphore:
+        return await asyncio.to_thread(run_piper_tts, req.text)
 
 
 @app.get("/api/voice/audio/{filename}")
@@ -898,21 +914,27 @@ async def api_voice_stt(file: UploadFile = File(...)):
             out.write(chunk)
 
     try:
-        proc = subprocess.run(
-            build_whisper_command(input_path, output_base),
-            capture_output=True,
-            text=True,
-            timeout=180,
-            check=False,
-        )
+        async with voice_job_semaphore:
+            proc = await asyncio.to_thread(
+                subprocess.run,
+                build_whisper_command(input_path, output_base),
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
     except subprocess.TimeoutExpired:
+        input_path.unlink(missing_ok=True)
         raise HTTPException(status_code=504, detail="Whisper timed out")
 
     if proc.returncode != 0 or not output_txt.exists():
+        input_path.unlink(missing_ok=True)
         detail = (proc.stderr or proc.stdout or "Whisper failed").strip()[-500:]
         raise HTTPException(status_code=500, detail=detail)
 
     transcript = output_txt.read_text(encoding="utf-8", errors="replace").strip()
+    input_path.unlink(missing_ok=True)
+    output_txt.unlink(missing_ok=True)
     return {"status": "ok", "transcript": transcript, "input_filename": Path(file.filename).name}
 
 
