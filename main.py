@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import re
@@ -12,7 +14,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 OLLAMA_BIN = "/usr/local/bin/ollama"
 SHARED_MODELS_DIR = "/usr/share/ollama/.ollama/models"
@@ -178,7 +180,7 @@ async def wait_for_startup(port: int, max_wait: float = 45.0) -> bool:
     return False
 
 
-async def do_load_model(port: int, model: str):
+async def do_load_model(port: int, model: str, options: Optional[RuntimeOptions | dict] = None):
     instance_loading.add(port)
     port_targets[port] = model
     port_errors[port] = None
@@ -186,7 +188,7 @@ async def do_load_model(port: int, model: str):
         async with httpx.AsyncClient(timeout=300.0) as client:
             r = await client.post(
                 f"http://127.0.0.1:{port}/api/generate",
-                json={"model": model, "prompt": "", "keep_alive": -1, "stream": False},
+                json=build_load_payload(model, options),
             )
             if r.status_code >= 400:
                 try:
@@ -286,8 +288,18 @@ class CreateInstanceRequest(BaseModel):
     model: Optional[str] = None
 
 
+class RuntimeOptions(BaseModel):
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0)
+    top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
+    top_k: Optional[int] = Field(None, ge=1, le=1000)
+    repeat_penalty: Optional[float] = Field(None, ge=0.1, le=5.0)
+    num_ctx: Optional[int] = Field(None, ge=512, le=131072)
+    seed: Optional[int] = Field(None, ge=-1, le=2147483647)
+
+
 class LoadModelRequest(BaseModel):
     model: str
+    options: Optional[RuntimeOptions] = None
 
 
 class PullModelRequest(BaseModel):
@@ -303,11 +315,27 @@ class ChatRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     system: Optional[str] = None
-    options: Optional[dict] = None
+    options: Optional[RuntimeOptions] = None
 
 
 def is_safe_model_name(name: str) -> bool:
     return bool(name and MODEL_NAME_RE.fullmatch(name) and ".." not in name and "://" not in name)
+
+
+def runtime_options_dict(options: Optional[RuntimeOptions | dict]) -> dict:
+    if not options:
+        return {}
+    if isinstance(options, BaseModel):
+        return options.model_dump(exclude_none=True)
+    return {k: v for k, v in options.items() if v is not None}
+
+
+def build_load_payload(model: str, options: Optional[RuntimeOptions | dict] = None) -> dict:
+    payload: dict = {"model": model, "prompt": "", "keep_alive": -1, "stream": False}
+    clean_options = runtime_options_dict(options)
+    if clean_options:
+        payload["options"] = clean_options
+    return payload
 
 
 def build_model_catalog(
@@ -625,7 +653,7 @@ async def load_model(port: int, req: LoadModelRequest, bg: BackgroundTasks):
         instances[port]["target_model"] = req.model
         instances[port]["last_error"] = None
 
-    bg.add_task(do_load_model, port, req.model)
+    bg.add_task(do_load_model, port, req.model, req.options)
     return {"status": "loading", "model": req.model, "port": port}
 
 
@@ -672,7 +700,7 @@ async def chat(port: int, req: ChatRequest):
         "model": req.model,
         "messages": [m.model_dump() for m in req.messages],
         "stream": True,
-        "options": req.options or {},
+        "options": runtime_options_dict(req.options),
     }
     if req.system:
         payload["system"] = req.system

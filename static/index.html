@@ -191,6 +191,7 @@
     .model-select:focus { outline: none; border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(34,211,238,.11); }
 
     .error-msg { font-size: 11px; color: var(--red); padding: 8px 10px; background: var(--red-dim); border: 1px solid rgba(251,113,133,.24); border-radius: 10px; word-break: break-all; margin-bottom: 10px; }
+    .runtime-mismatch { font-size: 11px; color: var(--yellow); padding: 8px 10px; background: var(--yellow-dim); border: 1px solid rgba(251,191,36,.24); border-radius: 10px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
     /* ── Spinner ── */
     .spinner { display: inline-block; width: 10px; height: 10px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .65s linear infinite; flex-shrink: 0; }
@@ -529,6 +530,22 @@
     localStorage.setItem(`ollama_settings_${port}`, JSON.stringify(settings));
   }
 
+  function hasSavedSettings(port) {
+    try { return localStorage.getItem(`ollama_settings_${port}`) !== null; }
+    catch { return false; }
+  }
+
+  function buildRuntimeOptions(settings) {
+    return {
+      temperature: settings.temperature,
+      top_p: settings.top_p,
+      top_k: settings.top_k,
+      repeat_penalty: settings.repeat_penalty,
+      num_ctx: settings.num_ctx,
+      ...(settings.seed !== -1 ? { seed: settings.seed } : {}),
+    };
+  }
+
   function getUiLabel(port) {
     try { return localStorage.getItem(`ollama_ui_label_${port}`) || ''; }
     catch { return ''; }
@@ -680,6 +697,12 @@
     return `<span class="badge badge-${status}"><span class="dot ${dotCls}"></span>${label}</span>`;
   }
 
+  function contextMismatch(inst) {
+    if (!hasSavedSettings(inst.port) || !inst.loaded_model || !inst.context_length) return false;
+    const configured = Number(getSettings(inst.port).num_ctx);
+    return configured && configured !== Number(inst.context_length);
+  }
+
   function renderCard(inst) {
     const { port, pid, status, loaded_model, loaded_model_size,
             model_family, model_params, model_quant, context_length,
@@ -704,10 +727,18 @@
         <td class="value"><span class="detail-value">${detailParts.join(' · ')}</span></td>
       </tr>` : '';
 
+    const hasConfiguredSettings = hasSavedSettings(port);
+    const configuredCtx = hasConfiguredSettings ? Number(getSettings(port).num_ctx) : null;
+    const mismatch = contextMismatch(inst);
     const ctxRow = context_length ? `
       <tr>
         <td class="label">Context</td>
         <td class="value"><span class="detail-value">${context_length.toLocaleString()} tok</span></td>
+      </tr>` : '';
+    const configuredCtxRow = configuredCtx ? `
+      <tr>
+        <td class="label">Configured Context</td>
+        <td class="value"><span class="detail-value">${configuredCtx.toLocaleString()} tok${mismatch ? ' · Reload required' : ''}</span></td>
       </tr>` : '';
 
     const sizeRow = loaded_model_size ? `
@@ -769,9 +800,10 @@
           <td class="label">Model</td>
           <td class="value">${modelDisplay}</td>
         </tr>
-        ${detailRow}${ctxRow}${sizeRow}
+        ${detailRow}${ctxRow}${configuredCtxRow}${sizeRow}
       </table>
 
+      ${mismatch ? `<div class="runtime-mismatch"><span>⚠ Reload required to apply configured context.</span><button class="btn btn-ghost btn-sm" data-port="${port}" data-model="${escapeAttr(loaded_model || '')}" onclick="applySettingsReloadFromButton(this)">Apply & Reload</button></div>` : ''}
       ${last_error ? `<div class="error-msg">⚠ ${last_error}</div>` : ''}
 
       <div class="card-actions">
@@ -921,12 +953,14 @@
     const port  = parseInt(document.getElementById('loadPort').value);
     const model = document.getElementById('loadModel').value;
     if (!model) { toast('Select a model', 'error'); return; }
-    setLoadModalBusy(true, `Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong>… This can take a moment.`);
+    const settings = getSettings(port);
+    const runtimeOptions = buildRuntimeOptions(settings);
+    setLoadModalBusy(true, `Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong> with configured context <strong>${runtimeOptions.num_ctx.toLocaleString()}</strong>… This can take a moment.`);
     try {
       const r = await fetch(`/api/instances/${port}/load`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model }),
+        body: JSON.stringify({ model, options: runtimeOptions }),
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.detail || 'Failed');
@@ -962,7 +996,7 @@
         const inst = list.find(i => i.port === port);
         if (!inst) return { ok: false, error: `Port :${port} disappeared` };
         if (inst.last_error) return { ok: false, error: inst.last_error };
-        if (inst.loaded_model === model && inst.status === 'running') return { ok: true };
+        if (inst.loaded_model === model && inst.status === 'running' && !contextMismatch(inst)) return { ok: true };
         if (inst.status === 'loading') {
           document.getElementById('loadStatus').innerHTML = `<span class="spinner"></span><span>Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong>… current card status is LOADING.</span>`;
         }
@@ -972,6 +1006,33 @@
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
     return { ok: false, error: null };
+  }
+
+  async function applySettingsReloadFromButton(button) {
+    const port = parseInt(button.dataset.port);
+    const model = button.dataset.model || '';
+    await applySettingsReload(port, model);
+  }
+
+  async function applySettingsReload(port, model) {
+    if (!model) return;
+    const runtimeOptions = buildRuntimeOptions(getSettings(port));
+    toast(`Reloading ${model} on :${port} with ${runtimeOptions.num_ctx.toLocaleString()} context…`, 'info');
+    try {
+      const r = await fetch(`/api/instances/${port}/load`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, options: runtimeOptions }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.detail || 'Failed');
+      await poll();
+      const result = await waitForLoadComplete(port, model);
+      if (!result.ok) throw new Error(result.error || `Timed out waiting for settings to apply on :${port}`);
+      toast(`Applied settings on :${port}`, 'success');
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   }
 
   // ── Unload ────────────────────────────────────────────────
@@ -1128,14 +1189,7 @@
       model: currentChatModel,
       messages,
       system: settings.system || undefined,
-      options: {
-        temperature:    settings.temperature,
-        top_p:          settings.top_p,
-        top_k:          settings.top_k,
-        repeat_penalty: settings.repeat_penalty,
-        num_ctx:        settings.num_ctx,
-        ...(settings.seed !== -1 ? { seed: settings.seed } : {}),
-      },
+      options: buildRuntimeOptions(settings),
     };
 
     chatStreaming = true;

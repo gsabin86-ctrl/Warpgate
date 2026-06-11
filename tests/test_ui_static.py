@@ -32,6 +32,28 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn("fetch('/api/main-status'", check_main_status)
         self.assertNotIn('127.0.0.1:11434', check_main_status)
 
+    def test_load_model_sends_runtime_options_from_saved_settings(self):
+        ui = self.read_ui()
+        start = ui.index('async function submitLoadModel()')
+        end = ui.index('async function waitForLoadComplete', start)
+        submit_load = ui[start:end]
+
+        self.assertIn('const settings = getSettings(port)', submit_load)
+        self.assertIn('const runtimeOptions = buildRuntimeOptions(settings)', submit_load)
+        self.assertIn('body: JSON.stringify({ model, options: runtimeOptions })', submit_load)
+
+    def test_settings_surface_reload_required_when_context_mismatches(self):
+        ui = self.read_ui()
+
+        self.assertIn('function buildRuntimeOptions(settings)', ui)
+        self.assertIn('function contextMismatch(inst)', ui)
+        self.assertIn('function applySettingsReloadFromButton(button)', ui)
+        self.assertIn('data-model="${escapeAttr(loaded_model || \'\')}"', ui)
+        self.assertIn('onclick="applySettingsReloadFromButton(this)"', ui)
+        self.assertIn('Configured Context', ui)
+        self.assertIn('Reload required', ui)
+        self.assertIn('Apply & Reload', ui)
+
 
 if __name__ == "__main__":
     unittest.main()

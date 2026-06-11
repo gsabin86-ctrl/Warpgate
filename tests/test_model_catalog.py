@@ -46,6 +46,31 @@ class ModelCatalogTests(unittest.TestCase):
         for name in invalid:
             self.assertFalse(main.is_safe_model_name(name), name)
 
+    def test_load_payload_includes_runtime_options_when_provided(self):
+        payload = main.build_load_payload("llama3.2:3b", {"num_ctx": 8192})
+
+        self.assertEqual(payload["model"], "llama3.2:3b")
+        self.assertEqual(payload["prompt"], "")
+        self.assertEqual(payload["keep_alive"], -1)
+        self.assertFalse(payload["stream"])
+        self.assertEqual(payload["options"], {"num_ctx": 8192})
+
+    def test_load_payload_omits_empty_runtime_options(self):
+        payload = main.build_load_payload("llama3.2:3b", {})
+
+        self.assertNotIn("options", payload)
+
+    def test_runtime_options_reject_unbounded_context(self):
+        with self.assertRaises(Exception):
+            main.RuntimeOptions(
+                temperature=None,
+                top_p=None,
+                top_k=None,
+                repeat_penalty=None,
+                num_ctx=999999,
+                seed=None,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
