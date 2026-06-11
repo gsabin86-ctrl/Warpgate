@@ -113,6 +113,12 @@ def is_allowed_audio_upload(name: str) -> bool:
 
 
 def ensure_private_voice_dir(path: Path) -> None:
+    if path != VOICE_RUNTIME_DIR:
+        try:
+            if path.is_relative_to(VOICE_RUNTIME_DIR):
+                ensure_private_voice_dir(VOICE_RUNTIME_DIR)
+        except ValueError:
+            pass
     if path.is_symlink():
         raise HTTPException(status_code=500, detail="Unsafe voice runtime directory")
     path.mkdir(parents=True, exist_ok=True)
