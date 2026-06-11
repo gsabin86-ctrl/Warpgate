@@ -21,6 +21,18 @@ SHARED_MODELS_DIR = "/usr/share/ollama/.ollama/models"
 INSTANCES_DIR = Path("/tmp/ollama-instances")
 DISCOVERY_RANGE = range(11434, 11500)
 
+VOICE_ROOT = Path(os.environ.get("WARPGATE_VOICE_ROOT", "/home/greg/voice-arsenal"))
+WHISPER_BIN = Path(os.environ.get("WARPGATE_WHISPER_BIN", str(VOICE_ROOT / "whisper.cpp/build/bin/whisper-cli")))
+WHISPER_MODEL = Path(os.environ.get("WARPGATE_WHISPER_MODEL", str(VOICE_ROOT / "whisper-models/ggml-base.en.bin")))
+PIPER_BIN = Path(os.environ.get("WARPGATE_PIPER_BIN", str(VOICE_ROOT / "piper/piper/piper")))
+PIPER_VOICE = Path(os.environ.get("WARPGATE_PIPER_VOICE", str(VOICE_ROOT / "piper-voices/en_US-amy-medium.onnx")))
+VOICE_RUNTIME_DIR = Path(os.environ.get("WARPGATE_VOICE_RUNTIME_DIR", "/tmp/warpgate-voice"))
+VOICE_TTS_DIR = VOICE_RUNTIME_DIR / "tts"
+VOICE_STT_DIR = VOICE_RUNTIME_DIR / "stt"
+MAX_TTS_CHARS = 2000
+MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
+VOICE_AUDIO_RE = re.compile(r"^[A-Za-z0-9_.-]+\.wav$")
+
 instances: dict[int, dict] = {}
 instance_loading: set[int] = set()
 instance_pulling: set[int] = set()
@@ -87,6 +99,28 @@ def count_ollama_processes() -> int:
         if "ollama" in cmdline:
             count += 1
     return count
+
+
+def is_safe_voice_audio_name(name: str) -> bool:
+    return bool(VOICE_AUDIO_RE.match(name))
+
+
+def voice_health() -> dict:
+    return {
+        "piper": {
+            "available": PIPER_BIN.exists() and os.access(PIPER_BIN, os.X_OK) and PIPER_VOICE.exists(),
+            "binary": str(PIPER_BIN),
+            "voice": str(PIPER_VOICE),
+            "voice_exists": PIPER_VOICE.exists(),
+        },
+        "whisper": {
+            "available": WHISPER_BIN.exists() and os.access(WHISPER_BIN, os.X_OK) and WHISPER_MODEL.exists(),
+            "binary": str(WHISPER_BIN),
+            "model": str(WHISPER_MODEL),
+            "model_exists": WHISPER_MODEL.exists(),
+        },
+        "runtime_dir": str(VOICE_RUNTIME_DIR),
+    }
 
 
 def get_system_telemetry() -> dict:
@@ -756,6 +790,11 @@ async def get_logs(port: int, lines: int = 100):
 @app.get("/api/telemetry")
 async def telemetry():
     return get_system_telemetry()
+
+
+@app.get("/api/voice/health")
+async def api_voice_health():
+    return voice_health()
 
 
 @app.get("/api/main-status")
