@@ -122,3 +122,26 @@ curl -fsS http://127.0.0.1:8000/api/instances
 ```
 
 For loaded model smoke tests, use Warpgate or direct Ollama API.
+
+## Installation result — 2026-06-11
+
+Installed on main Ollama, `http://127.0.0.1:11434`:
+
+- `llama3.2-vision:11b`
+  - Ollama ID: `6f2f9757ae97`
+  - Reported size: `7.8 GB`
+  - Smoke test: `/api/generate` returned `OK` for a short text prompt with `keep_alive: 0`.
+- `qwen2.5-coder:7b-instruct-q4_K_M`
+  - Ollama ID: `dae161e27b0e`
+  - Reported size: `4.7 GB`
+  - Smoke test: `/api/generate` returned `OK` for a short text prompt with `keep_alive: 0`.
+- `deepseek-r1:7b-qwen-distill-q4_K_M`
+  - Ollama ID: `755ced02ce7b`
+  - Reported size: `4.7 GB`
+  - Smoke test: `/api/generate` answered a `2+2` prompt; reasoning model latency was slower as expected.
+
+Post-install disk state:
+
+```text
+/ filesystem: 158G used, 274G available, 37% used
+```
