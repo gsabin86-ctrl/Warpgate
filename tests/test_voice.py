@@ -24,5 +24,21 @@ class VoiceTests(unittest.TestCase):
         self.assertFalse(main.is_safe_voice_audio_name("abc.mp3"))
 
 
+class VoiceTTSTests(unittest.TestCase):
+    def test_tts_request_rejects_empty_text(self):
+        self.assertEqual(main.TTSRequest(text="hello").text, "hello")
+        with self.assertRaises(Exception):
+            main.TTSRequest(text="")
+
+    def test_piper_command_uses_argv_not_shell(self):
+        out = Path("/tmp/example.wav")
+        cmd = main.build_piper_command(out)
+        self.assertEqual(cmd[0], str(main.PIPER_BIN))
+        self.assertIn("--model", cmd)
+        self.assertIn(str(main.PIPER_VOICE), cmd)
+        self.assertIn("--output_file", cmd)
+        self.assertIn(str(out), cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -12,7 +12,7 @@ from typing import Optional
 
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -120,6 +120,47 @@ def voice_health() -> dict:
             "model_exists": WHISPER_MODEL.exists(),
         },
         "runtime_dir": str(VOICE_RUNTIME_DIR),
+    }
+
+
+def build_piper_command(output_path: Path) -> list[str]:
+    return [
+        str(PIPER_BIN),
+        "--model", str(PIPER_VOICE),
+        "--output_file", str(output_path),
+    ]
+
+
+def run_piper_tts(text: str) -> dict:
+    health = voice_health()
+    if not health["piper"]["available"]:
+        raise HTTPException(status_code=503, detail="Piper voice is not available")
+
+    VOICE_TTS_DIR.mkdir(parents=True, exist_ok=True)
+    filename = f"tts-{os.urandom(8).hex()}.wav"
+    output_path = VOICE_TTS_DIR / filename
+
+    try:
+        proc = subprocess.run(
+            build_piper_command(output_path),
+            input=text,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Piper timed out")
+
+    if proc.returncode != 0 or not output_path.exists():
+        detail = (proc.stderr or proc.stdout or "Piper failed").strip()[-500:]
+        raise HTTPException(status_code=500, detail=detail)
+
+    return {
+        "status": "ok",
+        "audio_url": f"/api/voice/audio/{filename}",
+        "path": str(output_path),
+        "bytes": output_path.stat().st_size,
     }
 
 
@@ -334,6 +375,10 @@ class RuntimeOptions(BaseModel):
 class LoadModelRequest(BaseModel):
     model: str
     options: Optional[RuntimeOptions] = None
+
+
+class TTSRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=MAX_TTS_CHARS)
 
 
 class PullModelRequest(BaseModel):
@@ -795,6 +840,21 @@ async def telemetry():
 @app.get("/api/voice/health")
 async def api_voice_health():
     return voice_health()
+
+
+@app.post("/api/voice/tts")
+async def api_voice_tts(req: TTSRequest):
+    return run_piper_tts(req.text)
+
+
+@app.get("/api/voice/audio/{filename}")
+async def api_voice_audio(filename: str):
+    if not is_safe_voice_audio_name(filename):
+        raise HTTPException(status_code=400, detail="Invalid audio filename")
+    path = VOICE_TTS_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return FileResponse(path, media_type="audio/wav", filename=filename)
 
 
 @app.get("/api/main-status")
