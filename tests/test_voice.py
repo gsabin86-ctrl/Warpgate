@@ -40,5 +40,26 @@ class VoiceTTSTests(unittest.TestCase):
         self.assertIn(str(out), cmd)
 
 
+class VoiceSTTTests(unittest.TestCase):
+    def test_audio_extension_is_allowed(self):
+        self.assertTrue(main.is_allowed_audio_upload("sample.wav"))
+        self.assertTrue(main.is_allowed_audio_upload("sample.mp3"))
+        self.assertTrue(main.is_allowed_audio_upload("sample.ogg"))
+        self.assertTrue(main.is_allowed_audio_upload("sample.flac"))
+        self.assertFalse(main.is_allowed_audio_upload("sample.exe"))
+        self.assertFalse(main.is_allowed_audio_upload("../sample.wav"))
+
+    def test_whisper_command_uses_model_and_input_path(self):
+        input_path = Path("/tmp/input.wav")
+        output_base = Path("/tmp/output")
+        cmd = main.build_whisper_command(input_path, output_base)
+        self.assertEqual(cmd[0], str(main.WHISPER_BIN))
+        self.assertIn("-m", cmd)
+        self.assertIn(str(main.WHISPER_MODEL), cmd)
+        self.assertIn("-f", cmd)
+        self.assertIn(str(input_path), cmd)
+        self.assertIn("-otxt", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()

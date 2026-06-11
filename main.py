@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -32,6 +32,7 @@ VOICE_STT_DIR = VOICE_RUNTIME_DIR / "stt"
 MAX_TTS_CHARS = 2000
 MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
 VOICE_AUDIO_RE = re.compile(r"^[A-Za-z0-9_.-]+\.wav$")
+AUDIO_UPLOAD_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(wav|mp3|ogg|flac)$", re.IGNORECASE)
 
 instances: dict[int, dict] = {}
 instance_loading: set[int] = set()
@@ -105,6 +106,10 @@ def is_safe_voice_audio_name(name: str) -> bool:
     return bool(VOICE_AUDIO_RE.match(name))
 
 
+def is_allowed_audio_upload(name: str) -> bool:
+    return Path(name).name == name and bool(AUDIO_UPLOAD_RE.match(name))
+
+
 def voice_health() -> dict:
     return {
         "piper": {
@@ -128,6 +133,17 @@ def build_piper_command(output_path: Path) -> list[str]:
         str(PIPER_BIN),
         "--model", str(PIPER_VOICE),
         "--output_file", str(output_path),
+    ]
+
+
+def build_whisper_command(input_path: Path, output_base: Path) -> list[str]:
+    return [
+        str(WHISPER_BIN),
+        "-m", str(WHISPER_MODEL),
+        "-f", str(input_path),
+        "-nt",
+        "-otxt",
+        "-of", str(output_base),
     ]
 
 
@@ -855,6 +871,49 @@ async def api_voice_audio(filename: str):
     if not path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
     return FileResponse(path, media_type="audio/wav", filename=filename)
+
+
+@app.post("/api/voice/stt")
+async def api_voice_stt(file: UploadFile = File(...)):
+    health = voice_health()
+    if not health["whisper"]["available"]:
+        raise HTTPException(status_code=503, detail="Whisper is not available")
+    if not file.filename or not is_allowed_audio_upload(file.filename):
+        raise HTTPException(status_code=400, detail="Unsupported audio file type")
+
+    VOICE_STT_DIR.mkdir(parents=True, exist_ok=True)
+    suffix = Path(file.filename).suffix.lower()
+    stem = f"stt-{os.urandom(8).hex()}"
+    input_path = VOICE_STT_DIR / f"{stem}{suffix}"
+    output_base = VOICE_STT_DIR / stem
+    output_txt = VOICE_STT_DIR / f"{stem}.txt"
+
+    size = 0
+    with input_path.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > MAX_AUDIO_UPLOAD_BYTES:
+                input_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Audio upload too large")
+            out.write(chunk)
+
+    try:
+        proc = subprocess.run(
+            build_whisper_command(input_path, output_base),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Whisper timed out")
+
+    if proc.returncode != 0 or not output_txt.exists():
+        detail = (proc.stderr or proc.stdout or "Whisper failed").strip()[-500:]
+        raise HTTPException(status_code=500, detail=detail)
+
+    transcript = output_txt.read_text(encoding="utf-8", errors="replace").strip()
+    return {"status": "ok", "transcript": transcript, "input_filename": Path(file.filename).name}
 
 
 @app.get("/api/main-status")
