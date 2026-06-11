@@ -10,6 +10,7 @@ It provides a clean web UI to:
 - Browse installed models and identify whether a model is ready to load or needs pulling.
 - Pull models into the local cluster.
 - Chat/test models directly from the interface.
+- Generate local speech and transcribe audio through the Voice Console.
 - Monitor lightweight system telemetry in a Hermes-style sidebar.
 
 ## Current runtime
@@ -35,6 +36,12 @@ sudo systemctl status ollama-manager.service --no-pager
 ```
 
 ## Rollback hygiene
+
+Voice console details:
+
+```text
+docs/voice-integration.md
+```
 
 See the rollback runbook:
 

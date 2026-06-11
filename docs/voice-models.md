@@ -84,7 +84,7 @@ rm -rf /home/greg/voice-arsenal/piper /home/greg/voice-arsenal/piper-voices
 
 ## Integration rule
 
-Do not integrate voice into Warpgate until CLI validation is reliable. The first useful integration target is likely a separate voice-service endpoint or Hermes-side helper, not a large Warpgate UI change.
+Do not expand voice beyond the current CLI-backed Warpgate Voice Console until the first integration remains stable. See `docs/voice-integration.md` for the API/UI integration details.
 
 ## Installation result — 2026-06-11
 
