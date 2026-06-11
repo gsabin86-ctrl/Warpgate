@@ -112,6 +112,31 @@ def is_allowed_audio_upload(name: str) -> bool:
     return Path(name).name == name and bool(AUDIO_UPLOAD_RE.match(name))
 
 
+def ensure_private_voice_dir(path: Path) -> None:
+    if path.is_symlink():
+        raise HTTPException(status_code=500, detail="Unsafe voice runtime directory")
+    path.mkdir(parents=True, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
+        raise HTTPException(status_code=500, detail="Unsafe voice runtime directory")
+    try:
+        path.chmod(0o700)
+    except OSError:
+        pass
+
+
+def get_safe_voice_audio_path(filename: str) -> Path:
+    if not is_safe_voice_audio_name(filename):
+        raise HTTPException(status_code=400, detail="Invalid audio filename")
+    ensure_private_voice_dir(VOICE_TTS_DIR)
+    path = VOICE_TTS_DIR / filename
+    try:
+        if path.is_symlink() or not path.is_file() or path.parent.resolve() != VOICE_TTS_DIR.resolve():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+    except OSError:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return path
+
+
 def voice_health() -> dict:
     return {
         "piper": {
@@ -154,6 +179,7 @@ def cleanup_old_voice_files(max_age_seconds: int = 24 * 60 * 60) -> None:
     for directory in (VOICE_TTS_DIR, VOICE_STT_DIR):
         if not directory.exists():
             continue
+        ensure_private_voice_dir(directory)
         for path in directory.iterdir():
             try:
                 if path.is_file() and path.stat().st_mtime < cutoff:
@@ -167,7 +193,7 @@ def run_piper_tts(text: str) -> dict:
     if not health["piper"]["available"]:
         raise HTTPException(status_code=503, detail="Piper voice is not available")
 
-    VOICE_TTS_DIR.mkdir(parents=True, exist_ok=True)
+    ensure_private_voice_dir(VOICE_TTS_DIR)
     cleanup_old_voice_files()
     filename = f"tts-{os.urandom(8).hex()}.wav"
     output_path = VOICE_TTS_DIR / filename
@@ -182,9 +208,11 @@ def run_piper_tts(text: str) -> dict:
             check=False,
         )
     except subprocess.TimeoutExpired:
+        output_path.unlink(missing_ok=True)
         raise HTTPException(status_code=504, detail="Piper timed out")
 
     if proc.returncode != 0 or not output_path.exists():
+        output_path.unlink(missing_ok=True)
         detail = (proc.stderr or proc.stdout or "Piper failed").strip()[-500:]
         raise HTTPException(status_code=500, detail=detail)
 
@@ -881,11 +909,7 @@ async def api_voice_tts(req: TTSRequest):
 
 @app.get("/api/voice/audio/{filename}")
 async def api_voice_audio(filename: str):
-    if not is_safe_voice_audio_name(filename):
-        raise HTTPException(status_code=400, detail="Invalid audio filename")
-    path = VOICE_TTS_DIR / filename
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
+    path = get_safe_voice_audio_path(filename)
     return FileResponse(path, media_type="audio/wav", filename=filename)
 
 
@@ -897,24 +921,24 @@ async def api_voice_stt(file: UploadFile = File(...)):
     if not file.filename or not is_allowed_audio_upload(file.filename):
         raise HTTPException(status_code=400, detail="Unsupported audio file type")
 
-    VOICE_STT_DIR.mkdir(parents=True, exist_ok=True)
-    suffix = Path(file.filename).suffix.lower()
-    stem = f"stt-{os.urandom(8).hex()}"
-    input_path = VOICE_STT_DIR / f"{stem}{suffix}"
-    output_base = VOICE_STT_DIR / stem
-    output_txt = VOICE_STT_DIR / f"{stem}.txt"
+    async with voice_job_semaphore:
+        ensure_private_voice_dir(VOICE_STT_DIR)
+        cleanup_old_voice_files()
+        suffix = Path(file.filename).suffix.lower()
+        stem = f"stt-{os.urandom(8).hex()}"
+        input_path = VOICE_STT_DIR / f"{stem}{suffix}"
+        output_base = VOICE_STT_DIR / stem
+        output_txt = VOICE_STT_DIR / f"{stem}.txt"
 
-    size = 0
-    with input_path.open("wb") as out:
-        while chunk := await file.read(1024 * 1024):
-            size += len(chunk)
-            if size > MAX_AUDIO_UPLOAD_BYTES:
-                input_path.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="Audio upload too large")
-            out.write(chunk)
+        try:
+            size = 0
+            with input_path.open("wb") as out:
+                while chunk := await file.read(1024 * 1024):
+                    size += len(chunk)
+                    if size > MAX_AUDIO_UPLOAD_BYTES:
+                        raise HTTPException(status_code=413, detail="Audio upload too large")
+                    out.write(chunk)
 
-    try:
-        async with voice_job_semaphore:
             proc = await asyncio.to_thread(
                 subprocess.run,
                 build_whisper_command(input_path, output_base),
@@ -923,19 +947,20 @@ async def api_voice_stt(file: UploadFile = File(...)):
                 timeout=180,
                 check=False,
             )
-    except subprocess.TimeoutExpired:
-        input_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=504, detail="Whisper timed out")
 
-    if proc.returncode != 0 or not output_txt.exists():
-        input_path.unlink(missing_ok=True)
-        detail = (proc.stderr or proc.stdout or "Whisper failed").strip()[-500:]
-        raise HTTPException(status_code=500, detail=detail)
+            if proc.returncode != 0 or not output_txt.exists():
+                detail = (proc.stderr or proc.stdout or "Whisper failed").strip()[-500:]
+                raise HTTPException(status_code=500, detail=detail)
 
-    transcript = output_txt.read_text(encoding="utf-8", errors="replace").strip()
-    input_path.unlink(missing_ok=True)
-    output_txt.unlink(missing_ok=True)
-    return {"status": "ok", "transcript": transcript, "input_filename": Path(file.filename).name}
+            transcript = output_txt.read_text(encoding="utf-8", errors="replace").strip()
+            return {"status": "ok", "transcript": transcript, "input_filename": Path(file.filename).name}
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="Whisper timed out")
+        finally:
+            input_path.unlink(missing_ok=True)
+            output_txt.unlink(missing_ok=True)
+            for sidecar in VOICE_STT_DIR.glob(f"{stem}.*"):
+                sidecar.unlink(missing_ok=True)
 
 
 @app.get("/api/main-status")

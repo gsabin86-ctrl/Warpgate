@@ -1,5 +1,6 @@
 import unittest
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -24,6 +25,31 @@ class VoiceTests(unittest.TestCase):
         self.assertTrue(main.is_safe_voice_audio_name("abc-123.wav"))
         self.assertFalse(main.is_safe_voice_audio_name("../secret.wav"))
         self.assertFalse(main.is_safe_voice_audio_name("abc.mp3"))
+
+    def test_safe_voice_audio_path_rejects_symlinks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            audio_dir = Path(tmp)
+            target = audio_dir / "target.wav"
+            target.write_bytes(b"RIFFfake")
+            with patch.object(main, "VOICE_TTS_DIR", audio_dir):
+                self.assertEqual(main.get_safe_voice_audio_path("target.wav"), target)
+            link = audio_dir / "linked.wav"
+            link.symlink_to(target)
+            with patch.object(main, "VOICE_TTS_DIR", audio_dir):
+                with self.assertRaises(Exception):
+                    main.get_safe_voice_audio_path("linked.wav")
+
+    def test_private_voice_dir_rejects_symlink_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            safe = Path(tmp) / "safe"
+            main.ensure_private_voice_dir(safe)
+            self.assertTrue(safe.is_dir())
+            real = Path(tmp) / "real"
+            real.mkdir()
+            link = Path(tmp) / "link"
+            link.symlink_to(real, target_is_directory=True)
+            with self.assertRaises(Exception):
+                main.ensure_private_voice_dir(link)
 
 
 class VoiceTTSTests(unittest.TestCase):

@@ -124,6 +124,7 @@ curl -fsS -X POST http://127.0.0.1:8000/api/voice/stt \
 - Backend subprocess calls use argv lists, not `shell=True`.
 - TTS input is capped by `MAX_TTS_CHARS`.
 - Voice jobs share a small semaphore so slow subprocesses do not stampede the server.
+- Runtime voice directories are created with private permissions and symlink directories are rejected.
 - Old generated voice files are cleaned up automatically.
 - STT upload size is capped by `MAX_AUDIO_UPLOAD_BYTES`.
 - Uploaded files receive generated server-side names and are removed after transcription.
