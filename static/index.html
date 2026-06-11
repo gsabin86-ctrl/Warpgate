@@ -226,6 +226,13 @@
     .load-status { display: none; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 12px; border: 1px solid rgba(251,191,36,.35); background: var(--yellow-dim); color: var(--yellow); border-radius: 12px; font-size: 12px; line-height: 1.45; }
     .load-status.show { display: flex; }
     .load-status .spinner { width: 14px; height: 14px; margin-top: 1px; }
+    .voice-console { width: 760px; }
+    .voice-section { margin-top: 18px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--glass); }
+    .voice-section h4 { margin-bottom: 10px; font-size: 13px; color: var(--accent2); text-transform: uppercase; letter-spacing: .08em; font-family: var(--font-mono); }
+    .voice-section textarea { width: 100%; resize: vertical; }
+    .transcript-output { min-height: 90px; white-space: pre-wrap; color: var(--text); background: rgba(0,0,0,.25); padding: 12px; border-radius: 10px; border: 1px solid var(--border); font-family: var(--font-mono); font-size: 12px; line-height: 1.5; }
+    .row-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+    .voice-health { color: var(--text-muted); font-size: 12px; line-height: 1.45; padding: 10px 12px; border-radius: 10px; background: rgba(255,255,255,.035); border: 1px solid var(--border); }
     .load-status strong { color: var(--text); }
 
     /* ── Slider row ── */
@@ -304,6 +311,7 @@
         <div class="side-title">Controls</div>
         <div class="side-actions">
           <button class="btn btn-primary" onclick="openNewModal()">+ New Instance</button>
+          <button class="btn btn-secondary" onclick="openVoiceConsole()">🎙 Voice Console</button>
         </div>
       </div>
       <div class="side-panel">
@@ -475,6 +483,39 @@
         <button class="btn btn-ghost btn-sm" onclick="closeModal('chatModal')">Close</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ── Voice Console Modal ── -->
+<div class="overlay" id="voiceModal">
+  <div class="modal voice-console">
+    <div class="chat-header">
+      <div>
+        <h3 style="margin-bottom:2px">Voice Console</h3>
+        <div class="chat-meta">Piper speech output · Whisper transcription</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="closeVoiceConsole()">Close</button>
+    </div>
+
+    <div id="voiceHealth" class="voice-health">Checking voice systems...</div>
+
+    <section class="voice-section">
+      <h4>Text to Speech</h4>
+      <textarea class="form-textarea" id="voiceText" rows="5" maxlength="2000" placeholder="Type text to speak..."></textarea>
+      <div class="row-actions">
+        <button id="voiceSpeakBtn" class="btn btn-primary" onclick="generateVoiceSpeech()">Generate Speech</button>
+      </div>
+      <audio id="voicePlayer" controls style="display:none; width:100%; margin-top:12px"></audio>
+    </section>
+
+    <section class="voice-section">
+      <h4>Speech to Text</h4>
+      <input class="form-input" id="voiceAudioFile" type="file" accept="audio/wav,audio/mpeg,audio/ogg,audio/flac">
+      <div class="row-actions">
+        <button id="voiceTranscribeBtn" class="btn btn-primary" onclick="transcribeVoiceAudio()">Transcribe Audio</button>
+      </div>
+      <pre id="voiceTranscript" class="transcript-output"></pre>
+    </section>
   </div>
 </div>
 
@@ -1242,6 +1283,86 @@
       chatStreaming = false;
       document.getElementById('chatSendBtn').disabled = false;
       document.getElementById('chatStatus').textContent = '';
+    }
+  }
+
+  // ── Voice Console ─────────────────────────────────────────
+  async function loadVoiceHealth() {
+    const el = document.getElementById('voiceHealth');
+    try {
+      const r = await fetch('/api/voice/health');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'Voice health check failed');
+      const piperReady = Boolean(data.piper?.available);
+      const whisperReady = Boolean(data.whisper?.available);
+      el.textContent = `Piper: ${piperReady ? 'ready' : 'missing'} · Whisper: ${whisperReady ? 'ready' : 'missing'}`;
+      document.getElementById('voiceSpeakBtn').disabled = !piperReady;
+      document.getElementById('voiceTranscribeBtn').disabled = !whisperReady;
+    } catch (err) {
+      el.textContent = `Voice health check failed: ${err.message}`;
+      document.getElementById('voiceSpeakBtn').disabled = true;
+      document.getElementById('voiceTranscribeBtn').disabled = true;
+    }
+  }
+
+  function openVoiceConsole() {
+    document.getElementById('voiceModal').classList.add('open');
+    loadVoiceHealth();
+  }
+
+  function closeVoiceConsole() {
+    closeModal('voiceModal');
+  }
+
+  async function generateVoiceSpeech() {
+    const text = document.getElementById('voiceText').value.trim();
+    if (!text) { toast('Enter text to speak', 'error'); return; }
+    const btn = document.getElementById('voiceSpeakBtn');
+    const player = document.getElementById('voicePlayer');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    try {
+      const r = await fetch('/api/voice/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'TTS failed');
+      player.src = data.audio_url;
+      player.style.display = 'block';
+      await player.play().catch(() => {});
+      toast('Speech generated', 'success');
+    } catch (err) {
+      toast(err.message || 'TTS failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Generate Speech';
+    }
+  }
+
+  async function transcribeVoiceAudio() {
+    const input = document.getElementById('voiceAudioFile');
+    const out = document.getElementById('voiceTranscript');
+    if (!input.files.length) { toast('Choose an audio file', 'error'); return; }
+    const btn = document.getElementById('voiceTranscribeBtn');
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    btn.disabled = true;
+    btn.textContent = 'Transcribing...';
+    out.textContent = '';
+    try {
+      const r = await fetch('/api/voice/stt', { method: 'POST', body: form });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail || 'STT failed');
+      out.textContent = data.transcript || '(no transcript)';
+      toast('Transcription complete', 'success');
+    } catch (err) {
+      out.textContent = err.message || 'Transcription failed';
+      toast(err.message || 'Transcription failed', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Transcribe Audio';
     }
   }
 

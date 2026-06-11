@@ -55,5 +55,18 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('Apply & Reload', ui)
 
 
+    def test_voice_console_ui_hooks_are_present(self):
+        ui = self.read_ui()
+        self.assertIn('Voice Console', ui)
+        self.assertIn('id="voiceText"', ui)
+        self.assertIn('id="voiceAudioFile"', ui)
+        self.assertIn('async function loadVoiceHealth()', ui)
+        self.assertIn('async function generateVoiceSpeech()', ui)
+        self.assertIn('async function transcribeVoiceAudio()', ui)
+        self.assertIn('/api/voice/health', ui)
+        self.assertIn('/api/voice/tts', ui)
+        self.assertIn('/api/voice/stt', ui)
+
+
 if __name__ == "__main__":
     unittest.main()
