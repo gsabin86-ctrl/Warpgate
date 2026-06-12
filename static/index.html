@@ -189,6 +189,9 @@
 
     .model-select { flex: 1; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); padding: 5px 8px; border-radius: 8px; font-size: 12px; cursor: pointer; min-width: 0; }
     .model-select:focus { outline: none; border-color: var(--accent2); box-shadow: 0 0 0 3px rgba(34,211,238,.11); }
+    .form-select option, .model-select option { background: var(--surface2); color: var(--text); }
+    .form-select option:checked, .model-select option:checked,
+    .form-select option:hover, .model-select option:hover { background: rgba(34,211,238,.22); color: var(--text); }
 
     .error-msg { font-size: 11px; color: var(--red); padding: 8px 10px; background: var(--red-dim); border: 1px solid rgba(251,113,133,.24); border-radius: 10px; word-break: break-all; margin-bottom: 10px; }
     .runtime-mismatch { font-size: 11px; color: var(--yellow); padding: 8px 10px; background: var(--yellow-dim); border: 1px solid rgba(251,191,36,.24); border-radius: 10px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -239,6 +242,7 @@
     .slider-row { display: flex; align-items: center; gap: 10px; }
     .slider-row input[type=range] { flex: 1; accent-color: var(--accent2); }
     .slider-val { background: rgba(255,255,255,.045); border: 1px solid var(--border2); color: var(--text); padding: 3px 8px; border-radius: 8px; font-size: 12px; font-family: var(--font-mono); width: 58px; text-align: center; }
+    .slider-val-wide { width: 92px; }
 
     /* ── Settings grid ── */
     .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
@@ -429,9 +433,13 @@
           <input class="slider-val" type="number" id="sv_repeat_penalty" min="0.5" max="2" step="0.05" oninput="syncSliderInput('repeat_penalty')">
         </div>
       </div>
-      <div class="form-group">
+      <div class="form-group full">
         <label class="form-label">Context Length</label>
-        <input class="form-input" type="number" id="sv_num_ctx" min="512" max="131072" step="512" placeholder="2048">
+        <div class="slider-row">
+          <input type="range" id="s_num_ctx" min="512" max="131072" step="512" oninput="syncSlider('num_ctx')">
+          <input class="slider-val slider-val-wide" type="number" id="sv_num_ctx" min="512" max="131072" step="512" oninput="syncSliderInput('num_ctx')">
+        </div>
+        <div class="form-help" id="contextRangeHelp">Range: 512–131,072 tokens</div>
       </div>
       <div class="form-group">
         <label class="form-label">Seed (-1 = random)</label>
@@ -537,6 +545,8 @@
   // ── State ───────────────────────────────────────────────
   let models = [];
   let loadCatalog = [];
+  let currentInstances = [];
+  let selectedModelMetadata = null;
   let currentLogsPort = null;
   let currentChatPort = null;
   let currentChatModel = null;
@@ -559,6 +569,10 @@
     seed: -1,
     system: '',
   };
+
+  const CONTEXT_MIN = 512;
+  const CONTEXT_FALLBACK_MAX = 131072;
+  const CONTEXT_STEP = 512;
 
   function getSettings(port) {
     try {
@@ -596,6 +610,22 @@
     const clean = String(label || '').trim();
     if (clean) localStorage.setItem(`ollama_ui_label_${port}`, clean);
     else localStorage.removeItem(`ollama_ui_label_${port}`);
+  }
+
+  function formatErrorMessage(value) {
+    if (!value) return 'Failed';
+    if (typeof value === 'string') return value;
+    if (value instanceof Error) return value.message || 'Failed';
+    if (Array.isArray(value)) return value.map(formatErrorMessage).join('; ');
+    if (typeof value === 'object') {
+      if (value.msg) return value.msg;
+      if (value.message) return value.message;
+      if (value.error) return formatErrorMessage(value.error);
+      if (value.detail) return formatErrorMessage(value.detail);
+      try { return JSON.stringify(value); }
+      catch { return String(value); }
+    }
+    return String(value);
   }
 
   // ── Toast ────────────────────────────────────────────────
@@ -682,9 +712,10 @@
     try {
       const r = await fetch('/api/instances');
       const list = await r.json();
-      renderGrid(list);
-      renderClusterSummary(list);
-      document.getElementById('instanceCount').textContent = list.length;
+      currentInstances = Array.isArray(list) ? list : [];
+      renderGrid(currentInstances);
+      renderClusterSummary(currentInstances);
+      document.getElementById('instanceCount').textContent = currentInstances.length;
     } catch {}
   }
 
@@ -928,8 +959,9 @@
     try {
       const r = await fetch(`/api/instances/${port}/models`);
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Failed to load model catalog');
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
       loadCatalog = d.models || [];
+      selectedModelMetadata = null;
       const opts = loadCatalog.map(m => `
         <option value="${escapeAttr(m.name)}" data-availability="${m.availability}">
           ${escapeHtml(modelLabel(m, true))}
@@ -937,10 +969,12 @@
       document.getElementById('loadModel').innerHTML = '<option value="">Select a model</option>' + opts;
       updateLoadModelInfo();
     } catch (e) {
+      const message = formatErrorMessage(e);
       loadCatalog = [];
+      selectedModelMetadata = null;
       document.getElementById('loadModel').innerHTML = '<option value="">No models available</option>';
-      document.getElementById('loadModelInfo').textContent = e.message;
-      toast(e.message, 'error');
+      document.getElementById('loadModelInfo').textContent = message;
+      toast(message, 'error');
     }
   }
 
@@ -949,20 +983,72 @@
     return loadCatalog.find(m => m.name === name) || null;
   }
 
-  function updateLoadModelInfo() {
+  async function refreshSelectedModelMetadata(port, model) {
+    selectedModelMetadata = null;
+    if (!model) return null;
+    try {
+      const r = await fetch(`/api/instances/${port}/model-metadata?model=${encodeURIComponent(model)}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
+      selectedModelMetadata = d;
+      return d;
+    } catch (e) {
+      const message = formatErrorMessage(e);
+      document.getElementById('loadModelInfo').textContent = `Could not read model context metadata: ${message}`;
+      return null;
+    }
+  }
+
+  function contextBoundsForSelectedModel() {
+    const modelMax = Number(selectedModelMetadata && selectedModelMetadata.context_length);
+    const max = Number.isFinite(modelMax) && modelMax >= CONTEXT_MIN
+      ? Math.min(modelMax, CONTEXT_FALLBACK_MAX)
+      : CONTEXT_FALLBACK_MAX;
+    return {
+      min: CONTEXT_MIN,
+      max,
+      step: CONTEXT_STEP,
+      source: selectedModelMetadata?.model && modelMax ? selectedModelMetadata.model : 'fallback',
+    };
+  }
+
+  function validateContextBeforeLoad(port, model) {
+    const settings = getSettings(port);
+    const bounds = contextBoundsForSelectedModel();
+    const requested = Number(settings.num_ctx);
+    if (Number.isFinite(requested) && requested > bounds.max) {
+      const clamped = normalizeContextValue(requested, bounds.min, bounds.max);
+      const updated = { ...settings, num_ctx: clamped };
+      saveSettingsToStorage(port, updated);
+      const message = `${model} supports up to ${bounds.max.toLocaleString()} context tokens here. Warpgate lowered the pending context from ${requested.toLocaleString()} to ${clamped.toLocaleString()} before loading.`;
+      document.getElementById('loadStatus').innerHTML = `<span>⚠</span><span>${escapeHtml(message)}</span>`;
+      document.getElementById('loadStatus').classList.add('show');
+      toast(message, 'info');
+      return updated;
+    }
+    return settings;
+  }
+
+  async function updateLoadModelInfo() {
     const selected = selectedLoadModel();
     const loadBtn = document.getElementById('loadBtn');
     const pullInput = document.getElementById('pullModelName');
     if (!selected) {
+      selectedModelMetadata = null;
       document.getElementById('loadModelInfo').textContent = 'Choose a model installed on this port or pull one first.';
       loadBtn.disabled = true;
       return;
     }
     pullInput.value = selected.name;
     loadBtn.disabled = !selected.installed_on_target;
+    const port = parseInt(document.getElementById('loadPort').value);
+    const metadata = selected.installed_on_target ? await refreshSelectedModelMetadata(port, selected.name) : null;
     const ports = selected.available_ports?.length ? ` Available on ports: ${selected.available_ports.join(', ')}.` : '';
+    const contextInfo = metadata?.context_length
+      ? ` Max context: ${metadata.context_length.toLocaleString()} tokens.`
+      : ' Max context: unknown; using safe fallback limit.';
     document.getElementById('loadModelInfo').textContent = selected.installed_on_target
-      ? `Installed on target port. Ready to load.${ports}`
+      ? `Installed on target port. Ready to load.${ports}${contextInfo}`
       : `Needs pull before it can load on this port.${ports}`;
   }
 
@@ -980,10 +1066,10 @@
         body: JSON.stringify({ model }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Failed');
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
       toast(`Pulling ${model} on :${port}…`, 'info');
       closeModal('loadModal');
-    } catch (e) { toast(e.message, 'error'); }
+    } catch (e) { toast(formatErrorMessage(e), 'error'); }
     finally {
       pullBtn.disabled = false;
       pullBtn.innerHTML = '↓ Pull';
@@ -994,7 +1080,8 @@
     const port  = parseInt(document.getElementById('loadPort').value);
     const model = document.getElementById('loadModel').value;
     if (!model) { toast('Select a model', 'error'); return; }
-    const settings = getSettings(port);
+    await refreshSelectedModelMetadata(port, model);
+    const settings = validateContextBeforeLoad(port, model);
     const runtimeOptions = buildRuntimeOptions(settings);
     setLoadModalBusy(true, `Loading <strong>${escapeHtml(model)}</strong> on <strong>:${port}</strong> with configured context <strong>${runtimeOptions.num_ctx.toLocaleString()}</strong>… This can take a moment.`);
     try {
@@ -1004,7 +1091,7 @@
         body: JSON.stringify({ model, options: runtimeOptions }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Failed');
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
       toast(`Loading ${model} on :${port}…`, 'info');
       await poll();
       const result = await waitForLoadComplete(port, model);
@@ -1012,8 +1099,9 @@
       closeModal('loadModal');
       toast(`Loaded ${model} on :${port}`, 'success');
     } catch (e) {
-      toast(e.message, 'error');
-      document.getElementById('loadStatus').innerHTML = `<span>⚠</span><span>${escapeHtml(e.message)}</span>`;
+      const message = formatErrorMessage(e);
+      toast(message, 'error');
+      document.getElementById('loadStatus').innerHTML = `<span>⚠</span><span>${escapeHtml(message)}</span>`;
       document.getElementById('loadStatus').classList.add('show');
       document.getElementById('loadCancelBtn').disabled = false;
     } finally {
@@ -1066,13 +1154,13 @@
         body: JSON.stringify({ model, options: runtimeOptions }),
       });
       const d = await r.json();
-      if (!r.ok) throw new Error(d.detail || 'Failed');
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
       await poll();
       const result = await waitForLoadComplete(port, model);
       if (!result.ok) throw new Error(result.error || `Timed out waiting for settings to apply on :${port}`);
       toast(`Applied settings on :${port}`, 'success');
     } catch (e) {
-      toast(e.message, 'error');
+      toast(formatErrorMessage(e), 'error');
     }
   }
 
@@ -1107,15 +1195,69 @@
   }
 
   // ── Settings modal ────────────────────────────────────────
-  const SLIDER_FIELDS = ['temperature', 'top_p', 'top_k', 'repeat_penalty'];
+  const SLIDER_FIELDS = ['temperature', 'top_p', 'top_k', 'repeat_penalty', 'num_ctx'];
 
   function syncSlider(key) {
     const v = document.getElementById(`s_${key}`).value;
     document.getElementById(`sv_${key}`).value = v;
   }
   function syncSliderInput(key) {
-    const v = document.getElementById(`sv_${key}`).value;
-    document.getElementById(`s_${key}`).value = v;
+    const input = document.getElementById(`sv_${key}`);
+    const range = document.getElementById(`s_${key}`);
+    let v = input.value;
+    if (key === 'num_ctx') {
+      v = normalizeContextValue(v, parseInt(input.min, 10), parseInt(input.max, 10));
+      input.value = v;
+    }
+    range.value = v;
+  }
+
+  function findInstance(port) {
+    return currentInstances.find(inst => Number(inst.port) === Number(port)) || null;
+  }
+
+  function normalizeContextValue(value, min = CONTEXT_MIN, max = CONTEXT_FALLBACK_MAX) {
+    const parsed = parseInt(value, 10);
+    const fallback = Math.min(Math.max(DEFAULT_SETTINGS.num_ctx, min), max);
+    const base = Number.isFinite(parsed) ? parsed : fallback;
+    const clamped = Math.min(Math.max(base, min), max);
+    if (clamped === max) return max;
+    const stepped = Math.floor((clamped - min) / CONTEXT_STEP) * CONTEXT_STEP + min;
+    return Math.min(Math.max(stepped, min), max);
+  }
+
+  function contextBoundsForPort(port) {
+    const inst = findInstance(port);
+    const modelMax = Number(inst?.context_length);
+    const max = Number.isFinite(modelMax) && modelMax >= CONTEXT_MIN
+      ? Math.min(modelMax, CONTEXT_FALLBACK_MAX)
+      : CONTEXT_FALLBACK_MAX;
+    return {
+      min: CONTEXT_MIN,
+      max,
+      step: CONTEXT_STEP,
+      source: inst?.loaded_model && modelMax ? inst.loaded_model : 'fallback',
+    };
+  }
+
+  function configureContextSlider(port, value) {
+    const bounds = contextBoundsForPort(port);
+    const range = document.getElementById('s_num_ctx');
+    const input = document.getElementById('sv_num_ctx');
+    const help = document.getElementById('contextRangeHelp');
+    const normalized = normalizeContextValue(value, bounds.min, bounds.max);
+
+    [range, input].forEach(el => {
+      el.min = bounds.min;
+      el.max = bounds.max;
+      el.step = bounds.step;
+      el.value = normalized;
+    });
+
+    const source = bounds.source === 'fallback'
+      ? 'fallback limit'
+      : `loaded model: ${bounds.source}`;
+    help.textContent = `Range: ${bounds.min.toLocaleString()}–${bounds.max.toLocaleString()} tokens (${source})`;
   }
 
   function openSettings(port) {
@@ -1123,11 +1265,11 @@
     document.getElementById('settingsPort').textContent = port;
     document.getElementById('settingsPortVal').value = port;
 
-    SLIDER_FIELDS.forEach(k => {
+    SLIDER_FIELDS.filter(k => k !== 'num_ctx').forEach(k => {
       document.getElementById(`s_${k}`).value  = s[k];
       document.getElementById(`sv_${k}`).value = s[k];
     });
-    document.getElementById('sv_num_ctx').value = s.num_ctx;
+    configureContextSlider(port, s.num_ctx);
     document.getElementById('sv_seed').value    = s.seed;
     document.getElementById('sv_ui_label').value = getUiLabel(port);
     document.getElementById('sv_system').value  = s.system;
@@ -1142,7 +1284,11 @@
       top_p:          parseFloat(document.getElementById('sv_top_p').value),
       top_k:          parseInt(document.getElementById('sv_top_k').value),
       repeat_penalty: parseFloat(document.getElementById('sv_repeat_penalty').value),
-      num_ctx:        parseInt(document.getElementById('sv_num_ctx').value) || 2048,
+      num_ctx:        normalizeContextValue(
+        document.getElementById('sv_num_ctx').value,
+        parseInt(document.getElementById('sv_num_ctx').min, 10),
+        parseInt(document.getElementById('sv_num_ctx').max, 10),
+      ),
       seed:           parseInt(document.getElementById('sv_seed').value) ?? -1,
       system:         document.getElementById('sv_system').value,
     };
@@ -1156,11 +1302,11 @@
   function resetSettings() {
     const port = parseInt(document.getElementById('settingsPortVal').value);
     openSettings(port);  // Re-open with defaults replaced
-    SLIDER_FIELDS.forEach(k => {
+    SLIDER_FIELDS.filter(k => k !== 'num_ctx').forEach(k => {
       document.getElementById(`s_${k}`).value  = DEFAULT_SETTINGS[k];
       document.getElementById(`sv_${k}`).value = DEFAULT_SETTINGS[k];
     });
-    document.getElementById('sv_num_ctx').value = DEFAULT_SETTINGS.num_ctx;
+    configureContextSlider(port, DEFAULT_SETTINGS.num_ctx);
     document.getElementById('sv_seed').value    = DEFAULT_SETTINGS.seed;
     document.getElementById('sv_ui_label').value = '';
     document.getElementById('sv_system').value  = DEFAULT_SETTINGS.system;

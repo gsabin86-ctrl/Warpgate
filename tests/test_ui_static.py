@@ -38,7 +38,8 @@ class UiStaticTests(unittest.TestCase):
         end = ui.index('async function waitForLoadComplete', start)
         submit_load = ui[start:end]
 
-        self.assertIn('const settings = getSettings(port)', submit_load)
+        self.assertIn('await refreshSelectedModelMetadata(port, model)', submit_load)
+        self.assertIn('const settings = validateContextBeforeLoad(port, model)', submit_load)
         self.assertIn('const runtimeOptions = buildRuntimeOptions(settings)', submit_load)
         self.assertIn('body: JSON.stringify({ model, options: runtimeOptions })', submit_load)
 
@@ -66,6 +67,51 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('/api/voice/health', ui)
         self.assertIn('/api/voice/tts', ui)
         self.assertIn('/api/voice/stt', ui)
+
+    def test_frontend_formats_object_shaped_errors(self):
+        ui = self.read_ui()
+
+        self.assertIn('function formatErrorMessage(value)', ui)
+        self.assertIn('Array.isArray(value)', ui)
+        self.assertIn('value.detail', ui)
+        self.assertIn('JSON.stringify(value)', ui)
+        self.assertIn("throw new Error(formatErrorMessage(d.detail || d || 'Failed'))", ui)
+
+    def test_model_dropdown_options_have_dark_readable_theme(self):
+        ui = self.read_ui()
+
+        self.assertIn('.form-select option, .model-select option', ui)
+        self.assertIn('background: var(--surface2)', ui)
+        self.assertIn('color: var(--text)', ui)
+        self.assertIn('.form-select option:checked, .model-select option:checked', ui)
+
+    def test_context_length_uses_slider_controls(self):
+        ui = self.read_ui()
+
+        self.assertIn('id="s_num_ctx"', ui)
+        self.assertIn("oninput=\"syncSlider('num_ctx')\"", ui)
+        self.assertIn("oninput=\"syncSliderInput('num_ctx')\"", ui)
+        self.assertIn('id="contextRangeHelp"', ui)
+        self.assertIn("'num_ctx'", ui)
+
+    def test_load_modal_fetches_model_metadata_before_loading(self):
+        ui = self.read_ui()
+
+        self.assertIn('let selectedModelMetadata = null', ui)
+        self.assertIn('async function refreshSelectedModelMetadata(port, model)', ui)
+        self.assertIn('/model-metadata?model=', ui)
+        self.assertIn('selectedModelMetadata.context_length', ui)
+        self.assertIn('validateContextBeforeLoad(port, model)', ui)
+
+    def test_context_normalization_does_not_round_above_max(self):
+        ui = self.read_ui()
+        start = ui.index('function normalizeContextValue(value')
+        end = ui.index('function contextBoundsForPort', start)
+        normalize = ui[start:end]
+
+        self.assertIn('Math.floor((clamped - min) / CONTEXT_STEP)', normalize)
+        self.assertIn('Math.min(Math.max(stepped, min), max)', normalize)
+        self.assertNotIn('Math.round(clamped / CONTEXT_STEP)', normalize)
 
 
 if __name__ == "__main__":
