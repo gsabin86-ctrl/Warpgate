@@ -567,7 +567,7 @@
       <div class="row-actions">
         <button id="voiceTranscribeBtn" class="btn btn-primary" onclick="transcribeVoiceAudio()">Transcribe Audio</button>
         <button id="voicePushToTalkBtn" class="btn btn-secondary"
-          onpointerdown="startVoicePushToTalk()" onpointerup="stopVoicePushToTalk()" onpointerleave="stopVoicePushToTalk()">🎙 Hold to Talk</button>
+          onpointerdown="startVoicePushToTalk()" onpointerup="stopVoicePushToTalk(true)" onpointerleave="stopVoicePushToTalk(false)" onpointercancel="stopVoicePushToTalk(false)">🎙 Hold to Talk</button>
       </div>
       <div class="form-help" id="voiceMicStatus">Microphone permission is requested only when push-to-talk starts.</div>
       <pre id="voiceTranscript" class="transcript-output"></pre>
@@ -626,8 +626,8 @@
   let voiceOptions = null;
   let voiceMediaRecorder = null;
   let voiceMicStream = null;
-  let voiceRecordedChunks = [];
   let voicePttSessionId = 0;
+  let voicePttShouldTranscribe = false;
   const DEFAULT_VOICE_SETTINGS = {
     tts: {
       voice_id: '',
@@ -1633,7 +1633,7 @@
   }
 
   function closeVoiceConsole() {
-    stopVoicePushToTalk();
+    stopVoicePushToTalk(false);
     closeModal('voiceModal');
   }
 
@@ -1743,7 +1743,8 @@
       return;
     }
     try {
-      voiceRecordedChunks = [];
+      const recordedChunks = [];
+      voicePttShouldTranscribe = true;
       const sessionId = ++voicePttSessionId;
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (sessionId !== voicePttSessionId || !document.getElementById('voiceModal').classList.contains('open')) {
@@ -1754,15 +1755,15 @@
       const recordingStream = voiceMicStream;
       voiceMediaRecorder = new MediaRecorder(recordingStream);
       voiceMediaRecorder.ondataavailable = event => {
-        if (event.data && event.data.size > 0) voiceRecordedChunks.push(event.data);
+        if (event.data && event.data.size > 0) recordedChunks.push(event.data);
       };
       voiceMediaRecorder.onstop = async () => {
+        const shouldTranscribe = voicePttShouldTranscribe;
         recordingStream?.getTracks().forEach(track => track.stop());
         if (voiceMicStream === recordingStream) voiceMicStream = null;
-        status.textContent = 'Microphone released. Transcribing...';
-        const blob = new Blob(voiceRecordedChunks, { type: 'audio/webm' });
-        voiceRecordedChunks = [];
-        if (blob.size > 0) await transcribeRecordedVoiceAudio(blob);
+        status.textContent = shouldTranscribe ? 'Microphone released. Transcribing...' : 'Microphone released. Recording canceled.';
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        if (sessionId === voicePttSessionId && shouldTranscribe && blob.size > 0) await transcribeRecordedVoiceAudio(blob);
         status.textContent = 'Microphone permission is requested only when push-to-talk starts.';
       };
       voiceMediaRecorder.start();
@@ -1775,8 +1776,9 @@
     }
   }
 
-  function stopVoicePushToTalk() {
-    voicePttSessionId += 1;
+  function stopVoicePushToTalk(shouldTranscribe = true) {
+    voicePttShouldTranscribe = shouldTranscribe;
+    if (!shouldTranscribe || !voiceMediaRecorder || voiceMediaRecorder.state !== 'recording') voicePttSessionId += 1;
     if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
       voiceMediaRecorder.stop();
     } else if (voiceMicStream) {
@@ -1808,7 +1810,7 @@
 
   // ── Modal helpers ─────────────────────────────────────────
   function closeModal(id) {
-    if (id === 'voiceModal') stopVoicePushToTalk();
+    if (id === 'voiceModal') stopVoicePushToTalk(false);
     document.getElementById(id).classList.remove('open');
     if (id === 'logsModal') currentLogsPort = null;
     if (id === 'chatModal') { currentChatPort = null; currentChatModel = null; }

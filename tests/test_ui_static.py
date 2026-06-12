@@ -101,7 +101,7 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('navigator.mediaDevices.getUserMedia', ui)
         self.assertIn('let voiceMediaRecorder = null', ui)
         self.assertIn('async function startVoicePushToTalk()', ui)
-        self.assertIn('function stopVoicePushToTalk()', ui)
+        self.assertIn('function stopVoicePushToTalk', ui)
         self.assertIn('async function transcribeRecordedVoiceAudio(blob)', ui)
         self.assertIn('voiceMicStream.getTracks().forEach(track => track.stop())', ui)
         self.assertIn('const recordingStream = voiceMicStream', ui)
@@ -110,7 +110,7 @@ class UiStaticTests(unittest.TestCase):
     def test_voice_modal_all_close_paths_stop_microphone(self):
         ui = self.read_ui()
 
-        self.assertIn("if (id === 'voiceModal') stopVoicePushToTalk()", ui)
+        self.assertIn("if (id === 'voiceModal') stopVoicePushToTalk(false)", ui)
         self.assertIn("closeModal('voiceModal')", ui)
         self.assertIn("closeModal(el.id)", ui)
 
@@ -122,6 +122,23 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn("!document.getElementById('voiceModal').classList.contains('open')", ui)
         self.assertIn('stream.getTracks().forEach(track => track.stop())', ui)
         self.assertIn('voicePttSessionId += 1', ui)
+
+    def test_voice_ptt_cancel_close_does_not_transcribe_audio(self):
+        ui = self.read_ui()
+
+        self.assertIn("onpointerup=\"stopVoicePushToTalk(true)\"", ui)
+        self.assertIn("onpointerleave=\"stopVoicePushToTalk(false)\"", ui)
+        self.assertIn("onpointercancel=\"stopVoicePushToTalk(false)\"", ui)
+        self.assertIn("stopVoicePushToTalk(false)", ui)
+        self.assertIn("const shouldTranscribe = voicePttShouldTranscribe", ui)
+        self.assertIn("if (sessionId === voicePttSessionId && shouldTranscribe && blob.size > 0)", ui)
+
+    def test_voice_ptt_uses_per_session_recorded_chunks(self):
+        ui = self.read_ui()
+
+        self.assertIn('const recordedChunks = []', ui)
+        self.assertNotIn('let voiceRecordedChunks = []', ui)
+        self.assertIn('recordedChunks.push(event.data)', ui)
 
     def test_frontend_formats_object_shaped_errors(self):
         ui = self.read_ui()
