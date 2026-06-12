@@ -113,6 +113,17 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('Math.min(Math.max(stepped, min), max)', normalize)
         self.assertNotIn('Math.round(clamped / CONTEXT_STEP)', normalize)
 
+    def test_cards_do_not_translate_or_animate_on_hover(self):
+        ui = self.read_ui()
+        start = ui.index('/* ── Cards ── */')
+        end = ui.index('.card-header', start)
+        card_css = ui[start:end]
+
+        self.assertIn('transition: none;', card_css)
+        self.assertIn('.card:hover { border-color:', card_css)
+        self.assertNotIn('transition: border-color .2s, transform .2s, box-shadow .2s;', card_css)
+        self.assertNotIn('.card:hover { transform:', card_css)
+
 
 if __name__ == "__main__":
     unittest.main()
