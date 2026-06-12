@@ -1800,17 +1800,18 @@
 
   // ── Modal helpers ─────────────────────────────────────────
   function closeModal(id) {
+    if (id === 'voiceModal') stopVoicePushToTalk();
     document.getElementById(id).classList.remove('open');
     if (id === 'logsModal') currentLogsPort = null;
     if (id === 'chatModal') { currentChatPort = null; currentChatModel = null; }
   }
 
   document.querySelectorAll('.overlay').forEach(el => {
-    el.addEventListener('click', e => { if (e.target === el) el.classList.remove('open'); });
+    el.addEventListener('click', e => { if (e.target === el) closeModal(el.id); });
   });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
-      document.querySelectorAll('.overlay.open').forEach(el => el.classList.remove('open'));
+      document.querySelectorAll('.overlay.open').forEach(el => closeModal(el.id));
       currentLogsPort = null;
     }
   });

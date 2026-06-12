@@ -107,6 +107,13 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('const recordingStream = voiceMicStream', ui)
         self.assertIn('recordingStream?.getTracks().forEach(track => track.stop())', ui)
 
+    def test_voice_modal_all_close_paths_stop_microphone(self):
+        ui = self.read_ui()
+
+        self.assertIn("if (id === 'voiceModal') stopVoicePushToTalk()", ui)
+        self.assertIn("closeModal('voiceModal')", ui)
+        self.assertIn("closeModal(el.id)", ui)
+
     def test_frontend_formats_object_shaped_errors(self):
         ui = self.read_ui()
 
