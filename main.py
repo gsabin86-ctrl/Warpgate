@@ -7,12 +7,13 @@ import signal
 import socket
 import subprocess
 import time
+import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -27,6 +28,8 @@ WHISPER_BIN = Path(os.environ.get("WARPGATE_WHISPER_BIN", str(VOICE_ROOT / "whis
 WHISPER_MODEL = Path(os.environ.get("WARPGATE_WHISPER_MODEL", str(VOICE_ROOT / "whisper-models/ggml-base.en.bin")))
 PIPER_BIN = Path(os.environ.get("WARPGATE_PIPER_BIN", str(VOICE_ROOT / "piper/piper/piper")))
 PIPER_VOICE = Path(os.environ.get("WARPGATE_PIPER_VOICE", str(VOICE_ROOT / "piper-voices/en_US-amy-medium.onnx")))
+PIPER_VOICE_DIR = VOICE_ROOT / "piper-voices"
+WHISPER_MODEL_DIR = VOICE_ROOT / "whisper-models"
 VOICE_RUNTIME_DIR = Path(os.environ.get("WARPGATE_VOICE_RUNTIME_DIR", "/tmp/warpgate-voice"))
 VOICE_TTS_DIR = VOICE_RUNTIME_DIR / "tts"
 VOICE_STT_DIR = VOICE_RUNTIME_DIR / "stt"
@@ -56,6 +59,7 @@ CURATED_PULL_MODELS = [
 ]
 
 MODEL_NAME_RE = re.compile(r"^[A-Za-z0-9_.:/-]+$")
+VOICE_ASSET_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
 def is_port_bound(port: int) -> bool:
@@ -112,6 +116,74 @@ def is_allowed_audio_upload(name: str) -> bool:
     return Path(name).name == name and bool(AUDIO_UPLOAD_RE.match(name))
 
 
+def is_safe_voice_asset_id(value: str) -> bool:
+    return bool(value and VOICE_ASSET_ID_RE.fullmatch(value))
+
+
+def discover_piper_voices() -> list[dict]:
+    voices: list[dict] = []
+    if not PIPER_VOICE_DIR.exists():
+        return voices
+    for path in sorted(PIPER_VOICE_DIR.glob("*.onnx")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        voice_id = path.stem
+        if not is_safe_voice_asset_id(voice_id):
+            continue
+        try:
+            is_default = path.resolve() == PIPER_VOICE.resolve() if PIPER_VOICE.exists() else path == PIPER_VOICE
+        except OSError:
+            is_default = path == PIPER_VOICE
+        voices.append({"id": voice_id, "label": voice_id, "path": str(path), "default": is_default})
+    return voices
+
+
+def discover_whisper_models() -> list[dict]:
+    models: list[dict] = []
+    if not WHISPER_MODEL_DIR.exists():
+        return models
+    for path in sorted(WHISPER_MODEL_DIR.glob("ggml-*.bin")):
+        if path.is_symlink() or not path.is_file():
+            continue
+        model_id = path.stem.removeprefix("ggml-")
+        if not is_safe_voice_asset_id(model_id):
+            continue
+        try:
+            is_default = path.resolve() == WHISPER_MODEL.resolve() if WHISPER_MODEL.exists() else path == WHISPER_MODEL
+        except OSError:
+            is_default = path == WHISPER_MODEL
+        models.append({"id": model_id, "label": model_id, "path": str(path), "default": is_default})
+    return models
+
+
+def resolve_piper_voice(voice_id: Optional[str]) -> Path:
+    if not voice_id:
+        return PIPER_VOICE
+    if not is_safe_voice_asset_id(voice_id):
+        raise HTTPException(status_code=400, detail="Invalid Piper voice")
+    path = PIPER_VOICE_DIR / f"{voice_id}.onnx"
+    try:
+        if path.is_symlink() or not path.is_file() or path.parent.resolve() != PIPER_VOICE_DIR.resolve():
+            raise HTTPException(status_code=400, detail="Unknown Piper voice")
+    except OSError:
+        raise HTTPException(status_code=400, detail="Unknown Piper voice")
+    return path
+
+
+def resolve_whisper_model(model_id: Optional[str]) -> Path:
+    if not model_id:
+        return WHISPER_MODEL
+    if not is_safe_voice_asset_id(model_id):
+        raise HTTPException(status_code=400, detail="Invalid Whisper model")
+    path = WHISPER_MODEL_DIR / f"ggml-{model_id}.bin"
+    try:
+        if path.is_symlink() or not path.is_file() or path.parent.resolve() != WHISPER_MODEL_DIR.resolve():
+            raise HTTPException(status_code=400, detail="Unknown Whisper model")
+    except OSError:
+        raise HTTPException(status_code=400, detail="Unknown Whisper model")
+    return path
+
+
 def ensure_private_voice_dir(path: Path) -> None:
     if path != VOICE_RUNTIME_DIR:
         try:
@@ -161,23 +233,71 @@ def voice_health() -> dict:
     }
 
 
-def build_piper_command(output_path: Path) -> list[str]:
-    return [
+def voice_options() -> dict:
+    return {
+        "tts": {
+            "voices": discover_piper_voices(),
+            "defaults": TTSOptions().model_dump(),
+        },
+        "stt": {
+            "models": discover_whisper_models(),
+            "defaults": STTOptions().model_dump(),
+            "languages": ["en", "auto"],
+        },
+    }
+
+
+def build_piper_command(output_path: Path, options: Optional[TTSOptions] = None) -> list[str]:
+    options = options or TTSOptions()
+    cmd = [
         str(PIPER_BIN),
-        "--model", str(PIPER_VOICE),
+        "--model", str(resolve_piper_voice(options.voice_id)),
         "--output_file", str(output_path),
+        "--noise_scale", str(options.noise_scale),
+        "--length_scale", str(options.length_scale),
+        "--noise_w", str(options.noise_w),
+        "--sentence_silence", str(options.sentence_silence),
     ]
+    if options.speaker is not None:
+        cmd += ["--speaker", str(options.speaker)]
+    return cmd
 
 
-def build_whisper_command(input_path: Path, output_base: Path) -> list[str]:
-    return [
+def build_whisper_command(input_path: Path, output_base: Path, options: Optional[STTOptions] = None) -> list[str]:
+    options = options or STTOptions()
+    cmd = [
         str(WHISPER_BIN),
-        "-m", str(WHISPER_MODEL),
+        "-m", str(resolve_whisper_model(options.model_id)),
         "-f", str(input_path),
         "-nt",
         "-otxt",
         "-of", str(output_base),
+        "-l", options.language,
+        "-t", str(options.threads),
+        "-bs", str(options.beam_size),
+        "-tp", str(options.temperature),
     ]
+    if options.translate:
+        cmd.append("-tr")
+    return cmd
+
+
+def prepend_wav_silence(path: Path, silence_ms: int) -> None:
+    if silence_ms <= 0:
+        return
+    temp_path = path.with_suffix(".padded.wav")
+    try:
+        with wave.open(str(path), "rb") as src:
+            params = src.getparams()
+            frames = src.readframes(src.getnframes())
+            silence_frames = int(src.getframerate() * silence_ms / 1000)
+            silence = b"\x00" * silence_frames * src.getnchannels() * src.getsampwidth()
+        with wave.open(str(temp_path), "wb") as dst:
+            dst.setparams(params)
+            dst.writeframes(silence + frames)
+        temp_path.replace(path)
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 def cleanup_old_voice_files(max_age_seconds: int = 24 * 60 * 60) -> None:
@@ -194,7 +314,8 @@ def cleanup_old_voice_files(max_age_seconds: int = 24 * 60 * 60) -> None:
                 continue
 
 
-def run_piper_tts(text: str) -> dict:
+def run_piper_tts(text: str, options: Optional[TTSOptions] = None) -> dict:
+    options = options or TTSOptions()
     health = voice_health()
     if not health["piper"]["available"]:
         raise HTTPException(status_code=503, detail="Piper voice is not available")
@@ -206,7 +327,7 @@ def run_piper_tts(text: str) -> dict:
 
     try:
         proc = subprocess.run(
-            build_piper_command(output_path),
+            build_piper_command(output_path, options),
             input=text,
             text=True,
             capture_output=True,
@@ -221,6 +342,12 @@ def run_piper_tts(text: str) -> dict:
         output_path.unlink(missing_ok=True)
         detail = (proc.stderr or proc.stdout or "Piper failed").strip()[-500:]
         raise HTTPException(status_code=500, detail=detail)
+
+    try:
+        prepend_wav_silence(output_path, options.leading_silence_ms)
+    except wave.Error:
+        output_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Piper generated invalid WAV audio")
 
     return {
         "status": "ok",
@@ -442,8 +569,28 @@ class LoadModelRequest(BaseModel):
     options: Optional[RuntimeOptions] = None
 
 
+class TTSOptions(BaseModel):
+    voice_id: Optional[str] = None
+    speaker: Optional[int] = Field(None, ge=0, le=99)
+    noise_scale: float = Field(0.667, ge=0.0, le=2.0)
+    length_scale: float = Field(1.0, ge=0.5, le=2.0)
+    noise_w: float = Field(0.8, ge=0.0, le=2.0)
+    sentence_silence: float = Field(0.2, ge=0.0, le=2.0)
+    leading_silence_ms: int = Field(250, ge=0, le=2000)
+
+
+class STTOptions(BaseModel):
+    model_id: Optional[str] = None
+    language: str = Field("en", pattern=r"^(auto|[A-Za-z]{2})$")
+    translate: bool = False
+    threads: int = Field(4, ge=1, le=32)
+    beam_size: int = Field(5, ge=1, le=16)
+    temperature: float = Field(0.0, ge=0.0, le=1.0)
+
+
 class TTSRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=MAX_TTS_CHARS)
+    options: TTSOptions = Field(default_factory=lambda: TTSOptions())
 
 
 class PullModelRequest(BaseModel):
@@ -961,10 +1108,15 @@ async def api_voice_health():
     return voice_health()
 
 
+@app.get("/api/voice/options")
+async def api_voice_options():
+    return voice_options()
+
+
 @app.post("/api/voice/tts")
 async def api_voice_tts(req: TTSRequest):
     async with voice_job_semaphore:
-        return await asyncio.to_thread(run_piper_tts, req.text)
+        return await asyncio.to_thread(run_piper_tts, req.text, req.options)
 
 
 @app.get("/api/voice/audio/{filename}")
@@ -974,12 +1126,28 @@ async def api_voice_audio(filename: str):
 
 
 @app.post("/api/voice/stt")
-async def api_voice_stt(file: UploadFile = File(...)):
+async def api_voice_stt(
+    file: UploadFile = File(...),
+    model_id: Optional[str] = Form(None),
+    language: str = Form("en"),
+    translate: bool = Form(False),
+    threads: int = Form(4),
+    beam_size: int = Form(5),
+    temperature: float = Form(0.0),
+):
     health = voice_health()
     if not health["whisper"]["available"]:
         raise HTTPException(status_code=503, detail="Whisper is not available")
     if not file.filename or not is_allowed_audio_upload(file.filename):
         raise HTTPException(status_code=400, detail="Unsupported audio file type")
+    options = STTOptions(
+        model_id=model_id,
+        language=language,
+        translate=translate,
+        threads=threads,
+        beam_size=beam_size,
+        temperature=temperature,
+    )
 
     async with voice_job_semaphore:
         ensure_private_voice_dir(VOICE_STT_DIR)
@@ -1001,7 +1169,7 @@ async def api_voice_stt(file: UploadFile = File(...)):
 
             proc = await asyncio.to_thread(
                 subprocess.run,
-                build_whisper_command(input_path, output_base),
+                build_whisper_command(input_path, output_base, options),
                 capture_output=True,
                 text=True,
                 timeout=180,

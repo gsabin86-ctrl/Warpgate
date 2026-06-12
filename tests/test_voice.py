@@ -2,6 +2,7 @@ import unittest
 import subprocess
 import tempfile
 import time
+import wave
 from pathlib import Path
 from unittest.mock import patch
 
@@ -51,6 +52,70 @@ class VoiceTests(unittest.TestCase):
             with self.assertRaises(Exception):
                 main.ensure_private_voice_dir(link)
 
+    def test_voice_asset_id_rejects_path_traversal(self):
+        self.assertTrue(main.is_safe_voice_asset_id("en_US-amy-medium"))
+        self.assertTrue(main.is_safe_voice_asset_id("ggml-base.en"))
+        self.assertFalse(main.is_safe_voice_asset_id("../secret"))
+        self.assertFalse(main.is_safe_voice_asset_id("/tmp/model"))
+        self.assertFalse(main.is_safe_voice_asset_id("bad model"))
+
+    def test_discover_piper_voices_returns_safe_ids(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            voices = root / "piper-voices"
+            voices.mkdir()
+            voice = voices / "en_US-amy-medium.onnx"
+            voice.write_bytes(b"fake")
+            (voices / "en_US-amy-medium.onnx.json").write_text("{}")
+
+            with patch.object(main, "VOICE_ROOT", root), \
+                 patch.object(main, "PIPER_VOICE_DIR", voices), \
+                 patch.object(main, "PIPER_VOICE", voice):
+                result = main.discover_piper_voices()
+
+        self.assertEqual(result, [
+            {
+                "id": "en_US-amy-medium",
+                "label": "en_US-amy-medium",
+                "path": str(voice),
+                "default": True,
+            }
+        ])
+
+    def test_discover_whisper_models_uses_runtime_model_dir_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            models = root / "whisper-models"
+            models.mkdir()
+            model = models / "ggml-base.en.bin"
+            model.write_bytes(b"fake")
+            test_models = root / "whisper.cpp" / "models"
+            test_models.mkdir(parents=True)
+            (test_models / "for-tests-ggml-large.bin").write_bytes(b"fake")
+
+            with patch.object(main, "VOICE_ROOT", root), \
+                 patch.object(main, "WHISPER_MODEL_DIR", models), \
+                 patch.object(main, "WHISPER_MODEL", model):
+                result = main.discover_whisper_models()
+
+        self.assertEqual(result, [
+            {
+                "id": "base.en",
+                "label": "base.en",
+                "path": str(model),
+                "default": True,
+            }
+        ])
+
+    def test_voice_options_response_contains_catalogs_and_defaults(self):
+        result = main.voice_options()
+
+        self.assertIn("tts", result)
+        self.assertIn("stt", result)
+        self.assertIn("defaults", result["tts"])
+        self.assertIn("voices", result["tts"])
+        self.assertIn("models", result["stt"])
+
 
 class VoiceTTSTests(unittest.TestCase):
     def test_tts_request_rejects_empty_text(self):
@@ -67,13 +132,66 @@ class VoiceTTSTests(unittest.TestCase):
         self.assertIn("--output_file", cmd)
         self.assertIn(str(out), cmd)
 
+    def test_tts_options_validate_ranges(self):
+        opts = main.TTSOptions(
+            voice_id="en_US-amy-medium",
+            speaker=0,
+            noise_scale=0.667,
+            length_scale=1.0,
+            noise_w=0.8,
+            sentence_silence=0.2,
+            leading_silence_ms=250,
+        )
+        self.assertEqual(opts.leading_silence_ms, 250)
+
+        with self.assertRaises(Exception):
+            main.TTSOptions(length_scale=0.01)
+        with self.assertRaises(Exception):
+            main.TTSOptions(leading_silence_ms=5000)
+
+    def test_piper_command_includes_tuning_options(self):
+        out = Path("/tmp/example.wav")
+        opts = main.TTSOptions(noise_scale=0.5, length_scale=1.2, noise_w=0.7, sentence_silence=0.35, speaker=1)
+
+        cmd = main.build_piper_command(out, opts)
+
+        self.assertIn("--noise_scale", cmd)
+        self.assertIn("0.5", cmd)
+        self.assertIn("--length_scale", cmd)
+        self.assertIn("1.2", cmd)
+        self.assertIn("--noise_w", cmd)
+        self.assertIn("0.7", cmd)
+        self.assertIn("--sentence_silence", cmd)
+        self.assertIn("0.35", cmd)
+        self.assertIn("--speaker", cmd)
+        self.assertIn("1", cmd)
+
+    def test_prepend_wav_silence_increases_duration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.wav"
+            with wave.open(str(path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(b"\x01\x00" * 1600)  # 100ms
+
+            main.prepend_wav_silence(path, 250)
+
+            with wave.open(str(path), "rb") as wav:
+                self.assertEqual(wav.getnframes(), 1600 + 4000)
+
     def test_tts_response_does_not_expose_local_path(self):
         with patch.object(main, "VOICE_TTS_DIR", Path("/tmp/warpgate-test-tts")), \
              patch.object(main, "voice_health", return_value={"piper": {"available": True}}), \
              patch.object(main.subprocess, "run") as run:
             def fake_run(cmd, **kwargs):
-                Path(cmd[-1]).parent.mkdir(parents=True, exist_ok=True)
-                Path(cmd[-1]).write_bytes(b"RIFFfake")
+                output_path = Path(cmd[cmd.index("--output_file") + 1])
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                with wave.open(str(output_path), "wb") as wav:
+                    wav.setnchannels(1)
+                    wav.setsampwidth(2)
+                    wav.setframerate(16000)
+                    wav.writeframes(b"\x01\x00" * 1600)
                 return subprocess.CompletedProcess(cmd, 0, "", "")
             run.side_effect = fake_run
 
@@ -117,6 +235,31 @@ class VoiceSTTTests(unittest.TestCase):
         self.assertIn("-f", cmd)
         self.assertIn(str(input_path), cmd)
         self.assertIn("-otxt", cmd)
+
+    def test_stt_options_validate_ranges(self):
+        opts = main.STTOptions(model_id="base.en", language="en", translate=False, threads=4, beam_size=5, temperature=0.0)
+        self.assertEqual(opts.model_id, "base.en")
+        with self.assertRaises(Exception):
+            main.STTOptions(language="english")
+        with self.assertRaises(Exception):
+            main.STTOptions(threads=128)
+
+    def test_whisper_command_includes_stt_options(self):
+        input_path = Path("/tmp/input.wav")
+        output_base = Path("/tmp/output")
+        opts = main.STTOptions(model_id=None, language="auto", translate=True, threads=8, beam_size=3, temperature=0.2)
+
+        cmd = main.build_whisper_command(input_path, output_base, opts)
+
+        self.assertIn("-l", cmd)
+        self.assertIn("auto", cmd)
+        self.assertIn("-tr", cmd)
+        self.assertIn("-t", cmd)
+        self.assertIn("8", cmd)
+        self.assertIn("-bs", cmd)
+        self.assertIn("3", cmd)
+        self.assertIn("-tp", cmd)
+        self.assertIn("0.2", cmd)
 
 
 if __name__ == "__main__":
