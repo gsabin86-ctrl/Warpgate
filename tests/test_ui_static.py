@@ -114,6 +114,15 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn("closeModal('voiceModal')", ui)
         self.assertIn("closeModal(el.id)", ui)
 
+    def test_voice_ptt_cancels_pending_microphone_request(self):
+        ui = self.read_ui()
+
+        self.assertIn('let voicePttSessionId = 0', ui)
+        self.assertIn('const sessionId = ++voicePttSessionId', ui)
+        self.assertIn("!document.getElementById('voiceModal').classList.contains('open')", ui)
+        self.assertIn('stream.getTracks().forEach(track => track.stop())', ui)
+        self.assertIn('voicePttSessionId += 1', ui)
+
     def test_frontend_formats_object_shaped_errors(self):
         ui = self.read_ui()
 

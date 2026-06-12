@@ -627,6 +627,7 @@
   let voiceMediaRecorder = null;
   let voiceMicStream = null;
   let voiceRecordedChunks = [];
+  let voicePttSessionId = 0;
   const DEFAULT_VOICE_SETTINGS = {
     tts: {
       voice_id: '',
@@ -1743,7 +1744,13 @@
     }
     try {
       voiceRecordedChunks = [];
-      voiceMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const sessionId = ++voicePttSessionId;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (sessionId !== voicePttSessionId || !document.getElementById('voiceModal').classList.contains('open')) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      voiceMicStream = stream;
       const recordingStream = voiceMicStream;
       voiceMediaRecorder = new MediaRecorder(recordingStream);
       voiceMediaRecorder.ondataavailable = event => {
@@ -1769,6 +1776,7 @@
   }
 
   function stopVoicePushToTalk() {
+    voicePttSessionId += 1;
     if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
       voiceMediaRecorder.stop();
     } else if (voiceMicStream) {
