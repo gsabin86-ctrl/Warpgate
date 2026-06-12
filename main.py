@@ -36,7 +36,7 @@ VOICE_STT_DIR = VOICE_RUNTIME_DIR / "stt"
 MAX_TTS_CHARS = 2000
 MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
 VOICE_AUDIO_RE = re.compile(r"^[A-Za-z0-9_.-]+\.wav$")
-AUDIO_UPLOAD_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(wav|mp3|ogg|flac)$", re.IGNORECASE)
+AUDIO_UPLOAD_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(wav|mp3|ogg|flac|webm)$", re.IGNORECASE)
 
 instances: dict[int, dict] = {}
 instance_loading: set[int] = set()

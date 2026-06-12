@@ -502,10 +502,55 @@
         <h3 style="margin-bottom:2px">Voice Console</h3>
         <div class="chat-meta">Piper speech output · Whisper transcription</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="closeVoiceConsole()">Close</button>
+      <div class="row-actions" style="margin-top:0">
+        <button id="voiceSettingsBtn" class="btn btn-ghost btn-sm" onclick="toggleVoiceSettings()">⚙ Settings</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeVoiceConsole()">Close</button>
+      </div>
     </div>
 
     <div id="voiceHealth" class="voice-health">Checking voice systems...</div>
+
+    <section id="voiceSettingsPanel" class="voice-section" style="display:none">
+      <h4>Voice Settings</h4>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="form-label">Piper Voice</label>
+          <select class="form-select" id="voicePiperVoice"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Speech Speed</label>
+          <div class="slider-row">
+            <input type="range" id="voiceLengthScale" min="0.5" max="2" step="0.05" oninput="syncVoiceRange('voiceLengthScale','voiceLengthScaleVal')">
+            <input class="slider-val" type="number" id="voiceLengthScaleVal" min="0.5" max="2" step="0.05" oninput="syncVoiceRangeInput('voiceLengthScale','voiceLengthScaleVal')">
+          </div>
+          <div class="form-help">Lower is faster in Piper; 1.0 is normal.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Leading Silence (ms)</label>
+          <input class="form-input" type="number" id="voiceLeadingSilenceMs" min="0" max="2000" step="50">
+          <div class="form-help">Default 250ms helps prevent the first word from being cut off on first playback.</div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Sentence Silence</label>
+          <input class="form-input" type="number" id="voiceSentenceSilence" min="0" max="2" step="0.05">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Whisper Model</label>
+          <select class="form-select" id="voiceWhisperModel"></select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Language</label>
+          <select class="form-select" id="voiceLanguage">
+            <option value="en">English</option>
+            <option value="auto">Auto detect</option>
+          </select>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button class="btn btn-secondary" onclick="saveVoiceSettings()">Save Voice Settings</button>
+        <button class="btn btn-ghost" onclick="resetVoiceSettings()">Reset Defaults</button>
+      </div>
+    </section>
 
     <section class="voice-section">
       <h4>Text to Speech</h4>
@@ -513,15 +558,18 @@
       <div class="row-actions">
         <button id="voiceSpeakBtn" class="btn btn-primary" onclick="generateVoiceSpeech()">Generate Speech</button>
       </div>
-      <audio id="voicePlayer" controls style="display:none; width:100%; margin-top:12px"></audio>
+      <audio id="voicePlayer" controls preload="auto" style="display:none; width:100%; margin-top:12px"></audio>
     </section>
 
     <section class="voice-section">
       <h4>Speech to Text</h4>
-      <input class="form-input" id="voiceAudioFile" type="file" accept="audio/wav,audio/mpeg,audio/ogg,audio/flac">
+      <input class="form-input" id="voiceAudioFile" type="file" accept="audio/wav,audio/mpeg,audio/ogg,audio/flac,audio/webm">
       <div class="row-actions">
         <button id="voiceTranscribeBtn" class="btn btn-primary" onclick="transcribeVoiceAudio()">Transcribe Audio</button>
+        <button id="voicePushToTalkBtn" class="btn btn-secondary"
+          onpointerdown="startVoicePushToTalk()" onpointerup="stopVoicePushToTalk()" onpointerleave="stopVoicePushToTalk()">🎙 Hold to Talk</button>
       </div>
+      <div class="form-help" id="voiceMicStatus">Microphone permission is requested only when push-to-talk starts.</div>
       <pre id="voiceTranscript" class="transcript-output"></pre>
     </section>
   </div>
@@ -573,6 +621,31 @@
   const CONTEXT_MIN = 512;
   const CONTEXT_FALLBACK_MAX = 131072;
   const CONTEXT_STEP = 512;
+
+  const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v1';
+  let voiceOptions = null;
+  let voiceMediaRecorder = null;
+  let voiceMicStream = null;
+  let voiceRecordedChunks = [];
+  const DEFAULT_VOICE_SETTINGS = {
+    tts: {
+      voice_id: '',
+      speaker: null,
+      noise_scale: 0.667,
+      length_scale: 1.0,
+      noise_w: 0.8,
+      sentence_silence: 0.2,
+      leading_silence_ms: 250,
+    },
+    stt: {
+      model_id: '',
+      language: 'en',
+      translate: false,
+      threads: 4,
+      beam_size: 5,
+      temperature: 0.0,
+    },
+  };
 
   function getSettings(port) {
     try {
@@ -1433,6 +1506,105 @@
   }
 
   // ── Voice Console ─────────────────────────────────────────
+  function getVoiceSettings() {
+    try {
+      const saved = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) || '{}');
+      return {
+        tts: { ...DEFAULT_VOICE_SETTINGS.tts, ...(saved.tts || {}) },
+        stt: { ...DEFAULT_VOICE_SETTINGS.stt, ...(saved.stt || {}) },
+      };
+    } catch {
+      return JSON.parse(JSON.stringify(DEFAULT_VOICE_SETTINGS));
+    }
+  }
+
+  function saveVoiceSettingsToStorage(settings) {
+    localStorage.setItem(VOICE_SETTINGS_KEY, JSON.stringify(settings));
+  }
+
+  function syncVoiceRange(rangeId, inputId) {
+    document.getElementById(inputId).value = document.getElementById(rangeId).value;
+  }
+
+  function syncVoiceRangeInput(rangeId, inputId) {
+    document.getElementById(rangeId).value = document.getElementById(inputId).value;
+  }
+
+  function setSelectOptions(select, items, emptyLabel) {
+    const options = [`<option value="">${emptyLabel}</option>`].concat((items || []).map(item => {
+      const selected = item.default ? ' selected' : '';
+      return `<option value="${escapeAttr(item.id)}"${selected}>${escapeHtml(item.label || item.id)}</option>`;
+    }));
+    select.innerHTML = options.join('');
+  }
+
+  function applyVoiceSettingsToForm(settings = getVoiceSettings()) {
+    document.getElementById('voicePiperVoice').value = settings.tts.voice_id || '';
+    document.getElementById('voiceLengthScale').value = settings.tts.length_scale;
+    document.getElementById('voiceLengthScaleVal').value = settings.tts.length_scale;
+    document.getElementById('voiceLeadingSilenceMs').value = settings.tts.leading_silence_ms;
+    document.getElementById('voiceSentenceSilence').value = settings.tts.sentence_silence;
+    document.getElementById('voiceWhisperModel').value = settings.stt.model_id || '';
+    document.getElementById('voiceLanguage').value = settings.stt.language || 'en';
+  }
+
+  function readVoiceSettingsForm() {
+    return {
+      tts: {
+        ...DEFAULT_VOICE_SETTINGS.tts,
+        voice_id: document.getElementById('voicePiperVoice').value || null,
+        length_scale: parseFloat(document.getElementById('voiceLengthScaleVal').value || '1'),
+        sentence_silence: parseFloat(document.getElementById('voiceSentenceSilence').value || '0.2'),
+        leading_silence_ms: parseInt(document.getElementById('voiceLeadingSilenceMs').value || '250', 10),
+      },
+      stt: {
+        ...DEFAULT_VOICE_SETTINGS.stt,
+        model_id: document.getElementById('voiceWhisperModel').value || null,
+        language: document.getElementById('voiceLanguage').value || 'en',
+      },
+    };
+  }
+
+  async function loadVoiceOptions() {
+    try {
+      const r = await fetch('/api/voice/options');
+      const data = await r.json();
+      if (!r.ok) throw new Error(formatErrorMessage(data.detail || data || 'Voice options failed'));
+      voiceOptions = data;
+      setSelectOptions(document.getElementById('voicePiperVoice'), data.tts?.voices || [], 'Default Piper voice');
+      setSelectOptions(document.getElementById('voiceWhisperModel'), data.stt?.models || [], 'Default Whisper model');
+      const current = getVoiceSettings();
+      if (!current.tts.voice_id) {
+        const defaultVoice = (data.tts?.voices || []).find(v => v.default);
+        if (defaultVoice) current.tts.voice_id = defaultVoice.id;
+      }
+      if (!current.stt.model_id) {
+        const defaultModel = (data.stt?.models || []).find(m => m.default);
+        if (defaultModel) current.stt.model_id = defaultModel.id;
+      }
+      applyVoiceSettingsToForm(current);
+    } catch (err) {
+      toast(formatErrorMessage(err), 'error');
+    }
+  }
+
+  function saveVoiceSettings() {
+    const settings = readVoiceSettingsForm();
+    saveVoiceSettingsToStorage(settings);
+    toast('Voice settings saved', 'success');
+  }
+
+  function resetVoiceSettings() {
+    saveVoiceSettingsToStorage(DEFAULT_VOICE_SETTINGS);
+    applyVoiceSettingsToForm(DEFAULT_VOICE_SETTINGS);
+    toast('Voice settings reset', 'info');
+  }
+
+  function toggleVoiceSettings() {
+    const panel = document.getElementById('voiceSettingsPanel');
+    panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  }
+
   async function loadVoiceHealth() {
     const el = document.getElementById('voiceHealth');
     try {
@@ -1444,20 +1616,47 @@
       el.textContent = `Piper: ${piperReady ? 'ready' : 'missing'} · Whisper: ${whisperReady ? 'ready' : 'missing'}`;
       document.getElementById('voiceSpeakBtn').disabled = !piperReady;
       document.getElementById('voiceTranscribeBtn').disabled = !whisperReady;
+      document.getElementById('voicePushToTalkBtn').disabled = !whisperReady;
     } catch (err) {
       el.textContent = `Voice health check failed: ${err.message}`;
       document.getElementById('voiceSpeakBtn').disabled = true;
       document.getElementById('voiceTranscribeBtn').disabled = true;
+      document.getElementById('voicePushToTalkBtn').disabled = true;
     }
   }
 
   function openVoiceConsole() {
     document.getElementById('voiceModal').classList.add('open');
+    loadVoiceOptions();
     loadVoiceHealth();
   }
 
   function closeVoiceConsole() {
+    stopVoicePushToTalk();
     closeModal('voiceModal');
+  }
+
+  function waitForAudioReady(player) {
+    if (player.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        player.removeEventListener('canplaythrough', done);
+        player.removeEventListener('canplay', done);
+        resolve();
+      };
+      player.addEventListener('canplaythrough', done, { once: true });
+      player.addEventListener('canplay', done, { once: true });
+      setTimeout(done, 1500);
+    });
+  }
+
+  async function prepareVoicePlayerForPlayback(player, audioUrl) {
+    player.preload = 'auto';
+    player.src = audioUrl;
+    player.style.display = 'block';
+    player.load();
+    await waitForAudioReady(player);
+    player.currentTime = 0;
   }
 
   async function generateVoiceSpeech() {
@@ -1465,51 +1664,118 @@
     if (!text) { toast('Enter text to speak', 'error'); return; }
     const btn = document.getElementById('voiceSpeakBtn');
     const player = document.getElementById('voicePlayer');
+    const settings = getVoiceSettings();
     btn.disabled = true;
     btn.textContent = 'Generating...';
     try {
       const r = await fetch('/api/voice/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, options: settings.tts }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || 'TTS failed');
-      player.src = data.audio_url;
-      player.style.display = 'block';
+      if (!r.ok) throw new Error(formatErrorMessage(data.detail || data || 'TTS failed'));
+      await prepareVoicePlayerForPlayback(player, data.audio_url);
       await player.play().catch(() => {});
       toast('Speech generated', 'success');
     } catch (err) {
-      toast(err.message || 'TTS failed', 'error');
+      toast(formatErrorMessage(err), 'error');
     } finally {
       btn.disabled = false;
       btn.textContent = 'Generate Speech';
     }
   }
 
-  async function transcribeVoiceAudio() {
-    const input = document.getElementById('voiceAudioFile');
+  function appendVoiceSttSettings(form) {
+    const settings = getVoiceSettings();
+    form.append('model_id', settings.stt.model_id);
+    form.append('language', settings.stt.language);
+    form.append('translate', settings.stt.translate ? 'true' : 'false');
+    form.append('threads', String(settings.stt.threads));
+    form.append('beam_size', String(settings.stt.beam_size));
+    form.append('temperature', String(settings.stt.temperature));
+  }
+
+  async function submitVoiceTranscription(form, busyButton = null) {
     const out = document.getElementById('voiceTranscript');
-    if (!input.files.length) { toast('Choose an audio file', 'error'); return; }
-    const btn = document.getElementById('voiceTranscribeBtn');
-    const form = new FormData();
-    form.append('file', input.files[0]);
-    btn.disabled = true;
-    btn.textContent = 'Transcribing...';
+    if (busyButton) busyButton.disabled = true;
     out.textContent = '';
     try {
       const r = await fetch('/api/voice/stt', { method: 'POST', body: form });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.detail || 'STT failed');
+      if (!r.ok) throw new Error(formatErrorMessage(data.detail || data || 'STT failed'));
       out.textContent = data.transcript || '(no transcript)';
       toast('Transcription complete', 'success');
     } catch (err) {
-      out.textContent = err.message || 'Transcription failed';
-      toast(err.message || 'Transcription failed', 'error');
+      out.textContent = formatErrorMessage(err) || 'Transcription failed';
+      toast(formatErrorMessage(err), 'error');
     } finally {
-      btn.disabled = false;
-      btn.textContent = 'Transcribe Audio';
+      if (busyButton) busyButton.disabled = false;
     }
+  }
+
+  async function transcribeVoiceAudio() {
+    const input = document.getElementById('voiceAudioFile');
+    if (!input.files.length) { toast('Choose an audio file', 'error'); return; }
+    const btn = document.getElementById('voiceTranscribeBtn');
+    const form = new FormData();
+    form.append('file', input.files[0]);
+    appendVoiceSttSettings(form);
+    btn.textContent = 'Transcribing...';
+    await submitVoiceTranscription(form, btn);
+    btn.textContent = 'Transcribe Audio';
+  }
+
+  async function transcribeRecordedVoiceAudio(blob) {
+    const form = new FormData();
+    form.append('file', blob, 'push-to-talk.webm');
+    appendVoiceSttSettings(form);
+    await submitVoiceTranscription(form, document.getElementById('voicePushToTalkBtn'));
+  }
+
+  async function startVoicePushToTalk() {
+    const status = document.getElementById('voiceMicStatus');
+    const btn = document.getElementById('voicePushToTalkBtn');
+    if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      status.textContent = 'This browser does not support microphone recording.';
+      return;
+    }
+    try {
+      voiceRecordedChunks = [];
+      voiceMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      voiceMediaRecorder = new MediaRecorder(voiceMicStream);
+      voiceMediaRecorder.ondataavailable = event => {
+        if (event.data && event.data.size > 0) voiceRecordedChunks.push(event.data);
+      };
+      voiceMediaRecorder.onstop = async () => {
+        voiceMicStream.getTracks().forEach(track => track.stop());
+        voiceMicStream = null;
+        status.textContent = 'Microphone released. Transcribing...';
+        const blob = new Blob(voiceRecordedChunks, { type: 'audio/webm' });
+        voiceRecordedChunks = [];
+        if (blob.size > 0) await transcribeRecordedVoiceAudio(blob);
+        status.textContent = 'Microphone permission is requested only when push-to-talk starts.';
+      };
+      voiceMediaRecorder.start();
+      btn.textContent = 'Recording... release to transcribe';
+      status.textContent = 'Recording while button is held. Release to transcribe.';
+    } catch (err) {
+      status.textContent = `Microphone unavailable: ${err.message}`;
+      if (voiceMicStream) voiceMicStream.getTracks().forEach(track => track.stop());
+      voiceMicStream = null;
+    }
+  }
+
+  function stopVoicePushToTalk() {
+    if (voiceMediaRecorder && voiceMediaRecorder.state === 'recording') {
+      voiceMediaRecorder.stop();
+    } else if (voiceMicStream) {
+      voiceMicStream.getTracks().forEach(track => track.stop());
+      voiceMicStream = null;
+    }
+    const btn = document.getElementById('voicePushToTalkBtn');
+    if (btn) btn.textContent = '🎙 Hold to Talk';
   }
 
   // ── Logs modal ────────────────────────────────────────────

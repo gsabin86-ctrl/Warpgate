@@ -68,6 +68,43 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('/api/voice/tts', ui)
         self.assertIn('/api/voice/stt', ui)
 
+    def test_voice_settings_ui_hooks_are_present(self):
+        ui = self.read_ui()
+
+        self.assertIn('id="voiceSettingsBtn"', ui)
+        self.assertIn('id="voiceSettingsPanel"', ui)
+        self.assertIn('id="voicePiperVoice"', ui)
+        self.assertIn('id="voiceLengthScale"', ui)
+        self.assertIn('id="voiceLeadingSilenceMs"', ui)
+        self.assertIn('id="voiceWhisperModel"', ui)
+        self.assertIn('id="voiceLanguage"', ui)
+        self.assertIn('function loadVoiceOptions()', ui)
+        self.assertIn('function getVoiceSettings()', ui)
+        self.assertIn('function saveVoiceSettings()', ui)
+        self.assertIn('prepareVoicePlayerForPlayback', ui)
+
+    def test_voice_requests_send_settings_and_preload_audio(self):
+        ui = self.read_ui()
+
+        self.assertIn('body: JSON.stringify({ text, options: settings.tts })', ui)
+        self.assertIn("form.append('model_id', settings.stt.model_id)", ui)
+        self.assertIn("form.append('language', settings.stt.language)", ui)
+        self.assertIn('async function prepareVoicePlayerForPlayback(player, audioUrl)', ui)
+        self.assertIn("player.preload = 'auto'", ui)
+        self.assertIn('await waitForAudioReady(player)', ui)
+
+    def test_voice_push_to_talk_hooks_are_present(self):
+        ui = self.read_ui()
+
+        self.assertIn('id="voicePushToTalkBtn"', ui)
+        self.assertIn('id="voiceMicStatus"', ui)
+        self.assertIn('navigator.mediaDevices.getUserMedia', ui)
+        self.assertIn('let voiceMediaRecorder = null', ui)
+        self.assertIn('async function startVoicePushToTalk()', ui)
+        self.assertIn('function stopVoicePushToTalk()', ui)
+        self.assertIn('async function transcribeRecordedVoiceAudio(blob)', ui)
+        self.assertIn('voiceMicStream.getTracks().forEach(track => track.stop())', ui)
+
     def test_frontend_formats_object_shaped_errors(self):
         ui = self.read_ui()
 

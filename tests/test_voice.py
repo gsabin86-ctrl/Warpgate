@@ -222,6 +222,7 @@ class VoiceSTTTests(unittest.TestCase):
         self.assertTrue(main.is_allowed_audio_upload("sample.mp3"))
         self.assertTrue(main.is_allowed_audio_upload("sample.ogg"))
         self.assertTrue(main.is_allowed_audio_upload("sample.flac"))
+        self.assertTrue(main.is_allowed_audio_upload("sample.webm"))
         self.assertFalse(main.is_allowed_audio_upload("sample.exe"))
         self.assertFalse(main.is_allowed_audio_upload("../sample.wav"))
 
