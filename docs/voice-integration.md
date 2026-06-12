@@ -117,7 +117,6 @@ Response shape:
       {
         "id": "en_US-amy-medium",
         "label": "en_US-amy-medium",
-        "path": "/home/greg/voice-arsenal/piper-voices/en_US-amy-medium.onnx",
         "default": true
       }
     ],
@@ -136,7 +135,6 @@ Response shape:
       {
         "id": "base.en",
         "label": "base.en",
-        "path": "/home/greg/voice-arsenal/whisper-models/ggml-base.en.bin",
         "default": true
       }
     ],

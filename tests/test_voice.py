@@ -6,6 +6,8 @@ import wave
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
+
 import main
 
 
@@ -77,7 +79,6 @@ class VoiceTests(unittest.TestCase):
             {
                 "id": "en_US-amy-medium",
                 "label": "en_US-amy-medium",
-                "path": str(voice),
                 "default": True,
             }
         ])
@@ -102,7 +103,6 @@ class VoiceTests(unittest.TestCase):
             {
                 "id": "base.en",
                 "label": "base.en",
-                "path": str(model),
                 "default": True,
             }
         ])
@@ -261,6 +261,17 @@ class VoiceSTTTests(unittest.TestCase):
         self.assertIn("3", cmd)
         self.assertIn("-tp", cmd)
         self.assertIn("0.2", cmd)
+
+    def test_stt_route_rejects_invalid_form_options_as_422(self):
+        client = TestClient(main.app)
+        with patch.object(main, "voice_health", return_value={"whisper": {"available": True}}):
+            response = client.post(
+                "/api/voice/stt",
+                files={"file": ("sample.wav", b"RIFFfake", "audio/wav")},
+                data={"threads": "128"},
+            )
+
+        self.assertEqual(response.status_code, 422)
 
 
 if __name__ == "__main__":

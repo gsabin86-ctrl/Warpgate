@@ -16,7 +16,7 @@ import httpx
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 OLLAMA_BIN = "/usr/local/bin/ollama"
 SHARED_MODELS_DIR = "/usr/share/ollama/.ollama/models"
@@ -134,7 +134,7 @@ def discover_piper_voices() -> list[dict]:
             is_default = path.resolve() == PIPER_VOICE.resolve() if PIPER_VOICE.exists() else path == PIPER_VOICE
         except OSError:
             is_default = path == PIPER_VOICE
-        voices.append({"id": voice_id, "label": voice_id, "path": str(path), "default": is_default})
+        voices.append({"id": voice_id, "label": voice_id, "default": is_default})
     return voices
 
 
@@ -152,7 +152,7 @@ def discover_whisper_models() -> list[dict]:
             is_default = path.resolve() == WHISPER_MODEL.resolve() if WHISPER_MODEL.exists() else path == WHISPER_MODEL
         except OSError:
             is_default = path == WHISPER_MODEL
-        models.append({"id": model_id, "label": model_id, "path": str(path), "default": is_default})
+        models.append({"id": model_id, "label": model_id, "default": is_default})
     return models
 
 
@@ -1140,14 +1140,17 @@ async def api_voice_stt(
         raise HTTPException(status_code=503, detail="Whisper is not available")
     if not file.filename or not is_allowed_audio_upload(file.filename):
         raise HTTPException(status_code=400, detail="Unsupported audio file type")
-    options = STTOptions(
-        model_id=model_id,
-        language=language,
-        translate=translate,
-        threads=threads,
-        beam_size=beam_size,
-        temperature=temperature,
-    )
+    try:
+        options = STTOptions(
+            model_id=model_id or None,
+            language=language,
+            translate=translate,
+            threads=threads,
+            beam_size=beam_size,
+            temperature=temperature,
+        )
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors())
 
     async with voice_job_semaphore:
         ensure_private_voice_dir(VOICE_STT_DIR)

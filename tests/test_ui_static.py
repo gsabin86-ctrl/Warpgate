@@ -87,7 +87,7 @@ class UiStaticTests(unittest.TestCase):
         ui = self.read_ui()
 
         self.assertIn('body: JSON.stringify({ text, options: settings.tts })', ui)
-        self.assertIn("form.append('model_id', settings.stt.model_id)", ui)
+        self.assertIn('if (settings.stt.model_id) form.append', ui)
         self.assertIn("form.append('language', settings.stt.language)", ui)
         self.assertIn('async function prepareVoicePlayerForPlayback(player, audioUrl)', ui)
         self.assertIn("player.preload = 'auto'", ui)
@@ -104,6 +104,8 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('function stopVoicePushToTalk()', ui)
         self.assertIn('async function transcribeRecordedVoiceAudio(blob)', ui)
         self.assertIn('voiceMicStream.getTracks().forEach(track => track.stop())', ui)
+        self.assertIn('const recordingStream = voiceMicStream', ui)
+        self.assertIn('recordingStream?.getTracks().forEach(track => track.stop())', ui)
 
     def test_frontend_formats_object_shaped_errors(self):
         ui = self.read_ui()

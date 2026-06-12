@@ -1688,7 +1688,7 @@
 
   function appendVoiceSttSettings(form) {
     const settings = getVoiceSettings();
-    form.append('model_id', settings.stt.model_id);
+    if (settings.stt.model_id) form.append('model_id', settings.stt.model_id);
     form.append('language', settings.stt.language);
     form.append('translate', settings.stt.translate ? 'true' : 'false');
     form.append('threads', String(settings.stt.threads));
@@ -1744,13 +1744,14 @@
     try {
       voiceRecordedChunks = [];
       voiceMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      voiceMediaRecorder = new MediaRecorder(voiceMicStream);
+      const recordingStream = voiceMicStream;
+      voiceMediaRecorder = new MediaRecorder(recordingStream);
       voiceMediaRecorder.ondataavailable = event => {
         if (event.data && event.data.size > 0) voiceRecordedChunks.push(event.data);
       };
       voiceMediaRecorder.onstop = async () => {
-        voiceMicStream.getTracks().forEach(track => track.stop());
-        voiceMicStream = null;
+        recordingStream?.getTracks().forEach(track => track.stop());
+        if (voiceMicStream === recordingStream) voiceMicStream = null;
         status.textContent = 'Microphone released. Transcribing...';
         const blob = new Blob(voiceRecordedChunks, { type: 'audio/webm' });
         voiceRecordedChunks = [];
