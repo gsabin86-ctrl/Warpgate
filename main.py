@@ -466,6 +466,37 @@ def is_safe_model_name(name: str) -> bool:
     return bool(name and MODEL_NAME_RE.fullmatch(name) and ".." not in name and "://" not in name)
 
 
+def extract_model_context_length(show_data: dict) -> dict:
+    model_info = show_data.get("model_info") or {}
+    candidates: list[tuple[str, int]] = []
+
+    for key, value in model_info.items():
+        if not key.endswith(".context_length") and key != "context_length":
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed >= 512:
+            candidates.append((f"model_info.{key}", parsed))
+
+    if candidates:
+        source, context_length = max(candidates, key=lambda item: item[1])
+        return {"context_length": context_length, "context_source": source}
+
+    return {"context_length": None, "context_source": "unknown"}
+
+
+def build_model_metadata_response(port: int, model: str, show_data: dict) -> dict:
+    context = extract_model_context_length(show_data)
+    return {
+        "port": port,
+        "model": model,
+        "context_length": context["context_length"],
+        "context_source": context["context_source"],
+    }
+
+
 def runtime_options_dict(options: Optional[RuntimeOptions | dict]) -> dict:
     if not options:
         return {}
@@ -880,6 +911,29 @@ async def list_models_for_instance(port: int):
         raise HTTPException(404, f"No instance on port {port}")
     models_by_port = await collect_models_by_port(port)
     return build_model_catalog(port, models_by_port)
+
+
+@app.get("/api/instances/{port}/model-metadata")
+async def model_metadata(port: int, model: str):
+    if not is_safe_model_name(model):
+        raise HTTPException(400, "Invalid model name")
+    if not is_port_bound(port):
+        raise HTTPException(404, f"No Ollama instance is reachable on port {port}")
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.post(f"http://127.0.0.1:{port}/api/show", json={"model": model})
+    except httpx.RequestError as exc:
+        raise HTTPException(502, f"Failed to query model metadata on port {port}: {exc}")
+
+    if r.status_code >= 400:
+        try:
+            detail = r.json().get("error") or r.text
+        except Exception:
+            detail = r.text
+        raise HTTPException(r.status_code, detail or f"Ollama metadata lookup failed with HTTP {r.status_code}")
+
+    return build_model_metadata_response(port, model, r.json())
 
 
 @app.get("/api/instances/{port}/logs")

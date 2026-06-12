@@ -71,6 +71,48 @@ class ModelCatalogTests(unittest.TestCase):
                 seed=None,
             )
 
+    def test_extract_context_length_from_model_info(self):
+        show = {
+            "model_info": {
+                "llama.context_length": 4096,
+                "general.architecture": "llama",
+            }
+        }
+
+        result = main.extract_model_context_length(show)
+
+        self.assertEqual(result["context_length"], 4096)
+        self.assertEqual(result["context_source"], "model_info.llama.context_length")
+
+    def test_extract_context_length_finds_architecture_specific_key(self):
+        show = {
+            "model_info": {
+                "qwen2.context_length": 32768,
+                "general.architecture": "qwen2",
+            }
+        }
+
+        result = main.extract_model_context_length(show)
+
+        self.assertEqual(result["context_length"], 32768)
+        self.assertEqual(result["context_source"], "model_info.qwen2.context_length")
+
+    def test_extract_context_length_returns_none_when_unknown(self):
+        result = main.extract_model_context_length({"model_info": {}})
+
+        self.assertIsNone(result["context_length"])
+        self.assertEqual(result["context_source"], "unknown")
+
+    def test_build_model_metadata_response_includes_context(self):
+        show = {"model_info": {"llama.context_length": 8192}}
+
+        result = main.build_model_metadata_response(11434, "llama3.2:3b", show)
+
+        self.assertEqual(result["port"], 11434)
+        self.assertEqual(result["model"], "llama3.2:3b")
+        self.assertEqual(result["context_length"], 8192)
+        self.assertEqual(result["context_source"], "model_info.llama.context_length")
+
 
 if __name__ == "__main__":
     unittest.main()
