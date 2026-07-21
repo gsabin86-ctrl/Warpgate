@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 import re
 import signal
 import socket
+import struct
 import subprocess
 import time
 import wave
@@ -331,6 +333,23 @@ def build_whisper_command(input_path: Path, output_base: Path, options: Optional
     return cmd
 
 
+def build_wav_wake_preroll(frame_count: int, frame_rate: int, channels: int, sample_width: int) -> bytes:
+    if sample_width != 2:
+        return b"\x00" * frame_count * channels * sample_width
+
+    # Digital zero lets some mobile/Bluetooth noise gates sleep through the
+    # padding. A 40 Hz, -48 dBFS signal keeps the route active while remaining
+    # effectively inaudible on phone speakers and very quiet elsewhere.
+    amplitude = 128
+    tone_hz = 40
+    preroll = bytearray()
+    for frame_index in range(frame_count):
+        sample = int(amplitude * math.sin(2 * math.pi * tone_hz * frame_index / frame_rate))
+        packed = struct.pack("<h", sample)
+        preroll.extend(packed * channels)
+    return bytes(preroll)
+
+
 def prepend_wav_silence(path: Path, silence_ms: int) -> None:
     if silence_ms <= 0:
         return
@@ -340,7 +359,12 @@ def prepend_wav_silence(path: Path, silence_ms: int) -> None:
             params = src.getparams()
             frames = src.readframes(src.getnframes())
             silence_frames = int(src.getframerate() * silence_ms / 1000)
-            silence = b"\x00" * silence_frames * src.getnchannels() * src.getsampwidth()
+            silence = build_wav_wake_preroll(
+                silence_frames,
+                src.getframerate(),
+                src.getnchannels(),
+                src.getsampwidth(),
+            )
         with wave.open(str(temp_path), "wb") as dst:
             dst.setparams(params)
             dst.writeframes(silence + frames)

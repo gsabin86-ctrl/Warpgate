@@ -1,5 +1,6 @@
 import unittest
 import subprocess
+import struct
 import tempfile
 import time
 import wave
@@ -179,6 +180,23 @@ class VoiceTTSTests(unittest.TestCase):
 
             with wave.open(str(path), "rb") as wav:
                 self.assertEqual(wav.getnframes(), 1600 + 4000)
+
+    def test_leading_preroll_contains_sub_audible_wake_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "sample.wav"
+            with wave.open(str(path), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(16000)
+                wav.writeframes(b"\x01\x00" * 1600)
+
+            main.prepend_wav_silence(path, 250)
+
+            with wave.open(str(path), "rb") as wav:
+                preroll = wav.readframes(4000)
+            samples = struct.unpack("<" + "h" * (len(preroll) // 2), preroll)
+            self.assertTrue(any(samples))
+            self.assertLessEqual(max(abs(sample) for sample in samples), 128)
 
     def test_tts_default_leading_silence_wakes_slow_output_devices(self):
         self.assertEqual(main.TTSOptions().leading_silence_ms, 1000)

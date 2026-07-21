@@ -526,9 +526,9 @@
           <div class="form-help">Lower is faster in Piper; 1.0 is normal.</div>
         </div>
         <div class="form-group">
-          <label class="form-label">Leading Silence (ms)</label>
+          <label class="form-label">Leading Audio Warm-up (ms)</label>
           <input class="form-input" type="number" id="voiceLeadingSilenceMs" min="0" max="2000" step="50">
-          <div class="form-help">Default 1000ms gives phones, Bluetooth, and sleeping audio outputs time to wake before speech starts.</div>
+          <div class="form-help">Default 1000ms uses a sub-audible signal to wake phones, Bluetooth, and gated audio outputs before speech.</div>
         </div>
         <div class="form-group">
           <label class="form-label">Sentence Silence</label>
@@ -1658,8 +1658,8 @@
 
       const oscillator = voiceAudioContext.createOscillator();
       const gain = voiceAudioContext.createGain();
-      oscillator.frequency.value = 20;
-      gain.gain.value = 0.00001;
+      oscillator.frequency.value = 40;
+      gain.gain.value = 0.004;
       oscillator.connect(gain);
       gain.connect(voiceAudioContext.destination);
       oscillator.start();

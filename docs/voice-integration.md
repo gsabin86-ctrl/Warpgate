@@ -71,11 +71,11 @@ STT settings:
 
 Warpgate uses three protections for the first playback missing-first-word issue:
 
-1. The Generate button immediately primes the browser audio output with a near-inaudible Web Audio signal while Piper generates the clip. This gives mobile Safari, Bluetooth, and sleeping audio routes time to wake under the original user gesture.
-2. Backend TTS prepends configurable WAV silence, default `1000ms`, so the output remains warm before speech begins.
+1. The Generate button immediately primes the browser audio output with a sub-audible 40 Hz signal while Piper generates the clip. This gives mobile Safari, Bluetooth, and sleeping audio routes time to wake under the original user gesture.
+2. Backend TTS prepends a configurable sub-audible audio warm-up, default `1000ms`. It is intentionally not digital zero because gated output devices can remain asleep through pure silence.
 3. Frontend playback preloads the generated audio before calling `play()`.
 
-If a browser or Bluetooth/speaker path still clips the beginning, increase `Leading Silence (ms)` in Voice Settings.
+If an output path still clips the beginning, increase `Leading Audio Warm-up (ms)` in Voice Settings.
 
 ### Push-to-talk microphone behavior
 
