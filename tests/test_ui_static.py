@@ -82,6 +82,9 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('function getVoiceSettings()', ui)
         self.assertIn('function saveVoiceSettings()', ui)
         self.assertIn('prepareVoicePlayerForPlayback', ui)
+        self.assertIn("const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v2'", ui)
+        self.assertIn('leading_silence_ms: 1000', ui)
+        self.assertIn('Default 1000ms', ui)
 
     def test_voice_requests_send_settings_and_preload_audio(self):
         ui = self.read_ui()

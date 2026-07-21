@@ -528,7 +528,7 @@
         <div class="form-group">
           <label class="form-label">Leading Silence (ms)</label>
           <input class="form-input" type="number" id="voiceLeadingSilenceMs" min="0" max="2000" step="50">
-          <div class="form-help">Default 250ms helps prevent the first word from being cut off on first playback.</div>
+          <div class="form-help">Default 1000ms gives phones, Bluetooth, and sleeping audio outputs time to wake before speech starts.</div>
         </div>
         <div class="form-group">
           <label class="form-label">Sentence Silence</label>
@@ -622,7 +622,7 @@
   const CONTEXT_FALLBACK_MAX = 131072;
   const CONTEXT_STEP = 512;
 
-  const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v1';
+  const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v2';
   let voiceOptions = null;
   let voiceMediaRecorder = null;
   let voiceMicStream = null;
@@ -636,7 +636,7 @@
       length_scale: 1.0,
       noise_w: 0.8,
       sentence_silence: 0.2,
-      leading_silence_ms: 250,
+      leading_silence_ms: 1000,
     },
     stt: {
       model_id: '',
@@ -1556,7 +1556,7 @@
         voice_id: document.getElementById('voicePiperVoice').value || null,
         length_scale: parseFloat(document.getElementById('voiceLengthScaleVal').value || '1'),
         sentence_silence: parseFloat(document.getElementById('voiceSentenceSilence').value || '0.2'),
-        leading_silence_ms: parseInt(document.getElementById('voiceLeadingSilenceMs').value || '250', 10),
+        leading_silence_ms: parseInt(document.getElementById('voiceLeadingSilenceMs').value || '1000', 10),
       },
       stt: {
         ...DEFAULT_VOICE_SETTINGS.stt,

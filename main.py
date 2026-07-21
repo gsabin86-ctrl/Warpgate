@@ -26,6 +26,7 @@ DISCOVERY_RANGE = range(11434, 11500)
 VOICE_ROOT = Path(os.environ.get("WARPGATE_VOICE_ROOT", "/home/greg/voice-arsenal"))
 WHISPER_BIN = Path(os.environ.get("WARPGATE_WHISPER_BIN", str(VOICE_ROOT / "whisper.cpp/build/bin/whisper-cli")))
 WHISPER_MODEL = Path(os.environ.get("WARPGATE_WHISPER_MODEL", str(VOICE_ROOT / "whisper-models/ggml-base.en.bin")))
+FFMPEG_BIN = Path(os.environ.get("WARPGATE_FFMPEG_BIN", "/usr/bin/ffmpeg"))
 PIPER_BIN = Path(os.environ.get("WARPGATE_PIPER_BIN", str(VOICE_ROOT / "piper/piper/piper")))
 PIPER_VOICE = Path(os.environ.get("WARPGATE_PIPER_VOICE", str(VOICE_ROOT / "piper-voices/en_US-amy-medium.onnx")))
 PIPER_VOICE_DIR = VOICE_ROOT / "piper-voices"
@@ -224,10 +225,18 @@ def voice_health() -> dict:
             "voice_exists": PIPER_VOICE.exists(),
         },
         "whisper": {
-            "available": WHISPER_BIN.exists() and os.access(WHISPER_BIN, os.X_OK) and WHISPER_MODEL.exists(),
+            "available": (
+                WHISPER_BIN.exists()
+                and os.access(WHISPER_BIN, os.X_OK)
+                and WHISPER_MODEL.exists()
+                and FFMPEG_BIN.exists()
+                and os.access(FFMPEG_BIN, os.X_OK)
+            ),
             "binary": str(WHISPER_BIN),
             "model": str(WHISPER_MODEL),
             "model_exists": WHISPER_MODEL.exists(),
+            "normalizer": str(FFMPEG_BIN),
+            "normalizer_exists": FFMPEG_BIN.exists(),
         },
         "runtime_dir": str(VOICE_RUNTIME_DIR),
     }
@@ -261,6 +270,40 @@ def build_piper_command(output_path: Path, options: Optional[TTSOptions] = None)
     if options.speaker is not None:
         cmd += ["--speaker", str(options.speaker)]
     return cmd
+
+
+def build_ffmpeg_normalize_command(input_path: Path, output_path: Path) -> list[str]:
+    return [
+        str(FFMPEG_BIN),
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel", "error",
+        "-y",
+        "-i", str(input_path),
+        "-vn",
+        "-ac", "1",
+        "-ar", "16000",
+        "-c:a", "pcm_s16le",
+        str(output_path),
+    ]
+
+
+def normalize_audio_for_whisper(input_path: Path, output_path: Path) -> None:
+    try:
+        proc = subprocess.run(
+            build_ffmpeg_normalize_command(input_path, output_path),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        output_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=504, detail="Audio conversion timed out")
+
+    if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size <= 44:
+        output_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Unable to decode the uploaded audio recording")
 
 
 def build_whisper_command(input_path: Path, output_base: Path, options: Optional[STTOptions] = None) -> list[str]:
@@ -576,7 +619,7 @@ class TTSOptions(BaseModel):
     length_scale: float = Field(1.0, ge=0.5, le=2.0)
     noise_w: float = Field(0.8, ge=0.0, le=2.0)
     sentence_silence: float = Field(0.2, ge=0.0, le=2.0)
-    leading_silence_ms: int = Field(250, ge=0, le=2000)
+    leading_silence_ms: int = Field(1000, ge=0, le=2000)
 
 
 class STTOptions(BaseModel):
@@ -1158,6 +1201,7 @@ async def api_voice_stt(
         suffix = Path(file.filename).suffix.lower()
         stem = f"stt-{os.urandom(8).hex()}"
         input_path = VOICE_STT_DIR / f"{stem}{suffix}"
+        normalized_path = VOICE_STT_DIR / f"{stem}.normalized.wav"
         output_base = VOICE_STT_DIR / stem
         output_txt = VOICE_STT_DIR / f"{stem}.txt"
 
@@ -1170,9 +1214,13 @@ async def api_voice_stt(
                         raise HTTPException(status_code=413, detail="Audio upload too large")
                     out.write(chunk)
 
+            if size == 0:
+                raise HTTPException(status_code=400, detail="Audio recording is empty")
+
+            await asyncio.to_thread(normalize_audio_for_whisper, input_path, normalized_path)
             proc = await asyncio.to_thread(
                 subprocess.run,
-                build_whisper_command(input_path, output_base, options),
+                build_whisper_command(normalized_path, output_base, options),
                 capture_output=True,
                 text=True,
                 timeout=180,

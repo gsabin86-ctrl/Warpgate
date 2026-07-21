@@ -180,6 +180,9 @@ class VoiceTTSTests(unittest.TestCase):
             with wave.open(str(path), "rb") as wav:
                 self.assertEqual(wav.getnframes(), 1600 + 4000)
 
+    def test_tts_default_leading_silence_wakes_slow_output_devices(self):
+        self.assertEqual(main.TTSOptions().leading_silence_ms, 1000)
+
     def test_tts_response_does_not_expose_local_path(self):
         with patch.object(main, "VOICE_TTS_DIR", Path("/tmp/warpgate-test-tts")), \
              patch.object(main, "voice_health", return_value={"piper": {"available": True}}), \
@@ -236,6 +239,54 @@ class VoiceSTTTests(unittest.TestCase):
         self.assertIn("-f", cmd)
         self.assertIn(str(input_path), cmd)
         self.assertIn("-otxt", cmd)
+
+    def test_ffmpeg_command_normalizes_browser_audio_for_whisper(self):
+        source = Path("/tmp/push-to-talk.webm")
+        output = Path("/tmp/push-to-talk.normalized.wav")
+
+        cmd = main.build_ffmpeg_normalize_command(source, output)
+
+        self.assertEqual(cmd[0], str(main.FFMPEG_BIN))
+        self.assertIn(str(source), cmd)
+        self.assertEqual(cmd[-1], str(output))
+        self.assertIn("pcm_s16le", cmd)
+        self.assertIn("16000", cmd)
+        self.assertIn("1", cmd)
+
+    def test_stt_route_normalizes_webm_before_whisper(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stt_dir = Path(tmp)
+            whisper_inputs = []
+
+            def fake_run(cmd, **kwargs):
+                if cmd[0] == str(main.FFMPEG_BIN):
+                    normalized = Path(cmd[-1])
+                    with wave.open(str(normalized), "wb") as wav:
+                        wav.setnchannels(1)
+                        wav.setsampwidth(2)
+                        wav.setframerate(16000)
+                        wav.writeframes(b"\x01\x00" * 16000)
+                    return subprocess.CompletedProcess(cmd, 0, "", "")
+
+                whisper_input = Path(cmd[cmd.index("-f") + 1])
+                whisper_inputs.append(whisper_input)
+                output_base = Path(cmd[cmd.index("-of") + 1])
+                output_base.with_suffix(".txt").write_text("normalized speech")
+                return subprocess.CompletedProcess(cmd, 0, "", "")
+
+            client = TestClient(main.app)
+            with patch.object(main, "VOICE_STT_DIR", stt_dir), \
+                 patch.object(main, "voice_health", return_value={"whisper": {"available": True}}), \
+                 patch.object(main.subprocess, "run", side_effect=fake_run):
+                response = client.post(
+                    "/api/voice/stt",
+                    files={"file": ("push-to-talk.webm", b"fake-webm", "audio/webm")},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["transcript"], "normalized speech")
+        self.assertEqual(len(whisper_inputs), 1)
+        self.assertTrue(whisper_inputs[0].name.endswith(".normalized.wav"))
 
     def test_stt_options_validate_ranges(self):
         opts = main.STTOptions(model_id="base.en", language="en", translate=False, threads=4, beam_size=5, temperature=0.0)

@@ -5,6 +5,7 @@ Warpgate Voice Console exposes the local voice tools installed under `/home/greg
 ## Components
 
 - Speech-to-text: whisper.cpp
+- Browser-audio normalization: FFmpeg (`/usr/bin/ffmpeg` by default)
 - STT binary: `/home/greg/voice-arsenal/whisper.cpp/build/bin/whisper-cli`
 - STT model directory: `/home/greg/voice-arsenal/whisper-models/`
 - Default STT model: `/home/greg/voice-arsenal/whisper-models/ggml-base.en.bin`
@@ -49,7 +50,7 @@ Use the `⚙ Settings` button inside Voice Console.
 Settings are stored in browser `localStorage` under:
 
 ```text
-warpgate_voice_settings_v1
+warpgate_voice_settings_v2
 ```
 
 They are browser-local preferences, not server secrets.
@@ -70,7 +71,7 @@ STT settings:
 
 Warpgate uses two protections for the first playback missing-first-word issue:
 
-1. Backend TTS can prepend configurable WAV silence, default `250ms`.
+1. Backend TTS prepends configurable WAV silence, default `1000ms`, so phones, Bluetooth, and sleeping audio outputs can wake before speech begins.
 2. Frontend playback preloads the generated audio before calling `play()`.
 
 If a browser or Bluetooth/speaker path still clips the beginning, increase `Leading Silence (ms)` in Voice Settings.
@@ -90,7 +91,9 @@ Privacy and permission behavior:
 - The permission prompt appears when push-to-talk starts.
 - Recording only runs while the button is held.
 - Warpgate stops microphone tracks immediately after recording.
-- Recorded audio is sent to `/api/voice/stt` as a temporary upload and deleted server-side after transcription.
+- Recorded audio is sent to `/api/voice/stt` as a temporary upload.
+- Warpgate normalizes browser WebM/Opus and other accepted formats to mono 16 kHz PCM WAV with FFmpeg before invoking whisper.cpp.
+- The original upload, normalized WAV, transcript, and sidecar files are deleted after each request.
 
 Browser requirements:
 
@@ -127,7 +130,7 @@ Response shape:
       "length_scale": 1.0,
       "noise_w": 0.8,
       "sentence_silence": 0.2,
-      "leading_silence_ms": 250
+      "leading_silence_ms": 1000
     }
   },
   "stt": {
