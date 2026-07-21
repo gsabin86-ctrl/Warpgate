@@ -53,7 +53,7 @@ Settings are stored in browser `localStorage` under:
 warpgate_voice_settings_v2
 ```
 
-They are browser-local preferences, not server secrets.
+They are browser-local preferences, not server secrets. Existing `warpgate_voice_settings_v1` preferences are migrated once to v2; unrelated voice/model choices are preserved, while the old `250ms` default is upgraded to `1000ms`.
 
 TTS settings:
 
@@ -69,10 +69,11 @@ STT settings:
 
 ### First-word cutoff protection
 
-Warpgate uses two protections for the first playback missing-first-word issue:
+Warpgate uses three protections for the first playback missing-first-word issue:
 
-1. Backend TTS prepends configurable WAV silence, default `1000ms`, so phones, Bluetooth, and sleeping audio outputs can wake before speech begins.
-2. Frontend playback preloads the generated audio before calling `play()`.
+1. The Generate button immediately primes the browser audio output with a near-inaudible Web Audio signal while Piper generates the clip. This gives mobile Safari, Bluetooth, and sleeping audio routes time to wake under the original user gesture.
+2. Backend TTS prepends configurable WAV silence, default `1000ms`, so the output remains warm before speech begins.
+3. Frontend playback preloads the generated audio before calling `play()`.
 
 If a browser or Bluetooth/speaker path still clips the beginning, increase `Leading Silence (ms)` in Voice Settings.
 
@@ -93,6 +94,7 @@ Privacy and permission behavior:
 - Warpgate stops microphone tracks immediately after recording.
 - Recorded audio is sent to `/api/voice/stt` as a temporary upload.
 - Warpgate normalizes browser WebM/Opus and other accepted formats to mono 16 kHz PCM WAV with FFmpeg before invoking whisper.cpp.
+- Decoded audio is capped at five minutes and its normalized size is bounded before Whisper runs.
 - The original upload, normalized WAV, transcript, and sidecar files are deleted after each request.
 
 Browser requirements:

@@ -36,6 +36,8 @@ VOICE_TTS_DIR = VOICE_RUNTIME_DIR / "tts"
 VOICE_STT_DIR = VOICE_RUNTIME_DIR / "stt"
 MAX_TTS_CHARS = 2000
 MAX_AUDIO_UPLOAD_BYTES = 25 * 1024 * 1024
+MAX_STT_DURATION_SECONDS = 300
+MAX_NORMALIZED_AUDIO_BYTES = MAX_STT_DURATION_SECONDS * 16000 * 2 + 4096
 VOICE_AUDIO_RE = re.compile(r"^[A-Za-z0-9_.-]+\.wav$")
 AUDIO_UPLOAD_RE = re.compile(r"^[A-Za-z0-9_.-]+\.(wav|mp3|ogg|flac|webm)$", re.IGNORECASE)
 
@@ -280,6 +282,7 @@ def build_ffmpeg_normalize_command(input_path: Path, output_path: Path) -> list[
         "-loglevel", "error",
         "-y",
         "-i", str(input_path),
+        "-t", str(MAX_STT_DURATION_SECONDS),
         "-vn",
         "-ac", "1",
         "-ar", "16000",
@@ -304,6 +307,9 @@ def normalize_audio_for_whisper(input_path: Path, output_path: Path) -> None:
     if proc.returncode != 0 or not output_path.exists() or output_path.stat().st_size <= 44:
         output_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Unable to decode the uploaded audio recording")
+    if output_path.stat().st_size > MAX_NORMALIZED_AUDIO_BYTES:
+        output_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=413, detail="Audio recording exceeds the maximum duration")
 
 
 def build_whisper_command(input_path: Path, output_base: Path, options: Optional[STTOptions] = None) -> list[str]:

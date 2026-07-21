@@ -83,7 +83,10 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('function saveVoiceSettings()', ui)
         self.assertIn('prepareVoicePlayerForPlayback', ui)
         self.assertIn("const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v2'", ui)
+        self.assertIn("const LEGACY_VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v1'", ui)
         self.assertIn('leading_silence_ms: 1000', ui)
+        self.assertIn('saved.tts.leading_silence_ms === 250', ui)
+        self.assertIn('localStorage.removeItem(LEGACY_VOICE_SETTINGS_KEY)', ui)
         self.assertIn('Default 1000ms', ui)
 
     def test_voice_requests_send_settings_and_preload_audio(self):
@@ -95,6 +98,10 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('async function prepareVoicePlayerForPlayback(player, audioUrl)', ui)
         self.assertIn("player.preload = 'auto'", ui)
         self.assertIn('await waitForAudioReady(player)', ui)
+        self.assertIn('let voiceAudioContext = null', ui)
+        self.assertIn('function primeVoiceAudioOutput()', ui)
+        self.assertIn('const stopAudioWake = primeVoiceAudioOutput()', ui)
+        self.assertIn('stopAudioWake()', ui)
 
     def test_voice_push_to_talk_hooks_are_present(self):
         ui = self.read_ui()

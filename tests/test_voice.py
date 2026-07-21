@@ -252,6 +252,39 @@ class VoiceSTTTests(unittest.TestCase):
         self.assertIn("pcm_s16le", cmd)
         self.assertIn("16000", cmd)
         self.assertIn("1", cmd)
+        self.assertIn("-t", cmd)
+        self.assertIn(str(main.MAX_STT_DURATION_SECONDS), cmd)
+
+    @unittest.skipUnless(main.FFMPEG_BIN.exists(), "FFmpeg is required for normalization integration")
+    def test_real_ffmpeg_normalizes_webm_to_whisper_wav_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source_wav = root / "source.wav"
+            source_webm = root / "source.webm"
+            normalized = root / "normalized.wav"
+            with wave.open(str(source_wav), "wb") as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(22050)
+                wav.writeframes(b"\x01\x00" * 22050)
+
+            encoded = subprocess.run(
+                [str(main.FFMPEG_BIN), "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+                 "-i", str(source_wav), "-c:a", "libopus", str(source_webm)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            self.assertEqual(encoded.returncode, 0, encoded.stderr)
+
+            main.normalize_audio_for_whisper(source_webm, normalized)
+
+            with wave.open(str(normalized), "rb") as wav:
+                self.assertEqual(wav.getnchannels(), 1)
+                self.assertEqual(wav.getframerate(), 16000)
+                self.assertEqual(wav.getsampwidth(), 2)
+                self.assertGreater(wav.getnframes(), 0)
 
     def test_stt_route_normalizes_webm_before_whisper(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -282,11 +315,50 @@ class VoiceSTTTests(unittest.TestCase):
                     "/api/voice/stt",
                     files={"file": ("push-to-talk.webm", b"fake-webm", "audio/webm")},
                 )
+            self.assertEqual(list(stt_dir.iterdir()), [])
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["transcript"], "normalized speech")
         self.assertEqual(len(whisper_inputs), 1)
         self.assertTrue(whisper_inputs[0].name.endswith(".normalized.wav"))
+
+    def test_audio_normalization_timeout_is_504(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source.webm"
+            output = Path(tmp) / "normalized.wav"
+            source.write_bytes(b"webm")
+            with patch.object(main.subprocess, "run", side_effect=subprocess.TimeoutExpired("ffmpeg", 60)):
+                with self.assertRaises(main.HTTPException) as raised:
+                    main.normalize_audio_for_whisper(source, output)
+        self.assertEqual(raised.exception.status_code, 504)
+
+    def test_stt_route_rejects_empty_upload_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stt_dir = Path(tmp)
+            client = TestClient(main.app)
+            with patch.object(main, "VOICE_STT_DIR", stt_dir), \
+                 patch.object(main, "voice_health", return_value={"whisper": {"available": True}}):
+                response = client.post(
+                    "/api/voice/stt",
+                    files={"file": ("empty.webm", b"", "audio/webm")},
+                )
+            self.assertEqual(list(stt_dir.iterdir()), [])
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "Audio recording is empty")
+
+    @unittest.skipUnless(main.FFMPEG_BIN.exists(), "FFmpeg is required for malformed-audio validation")
+    def test_stt_route_rejects_malformed_audio_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stt_dir = Path(tmp)
+            client = TestClient(main.app)
+            with patch.object(main, "VOICE_STT_DIR", stt_dir), \
+                 patch.object(main, "voice_health", return_value={"whisper": {"available": True}}):
+                response = client.post(
+                    "/api/voice/stt",
+                    files={"file": ("broken.webm", b"not-an-audio-file", "audio/webm")},
+                )
+            self.assertEqual(list(stt_dir.iterdir()), [])
+        self.assertEqual(response.status_code, 400)
 
     def test_stt_options_validate_ranges(self):
         opts = main.STTOptions(model_id="base.en", language="en", translate=False, threads=4, beam_size=5, temperature=0.0)

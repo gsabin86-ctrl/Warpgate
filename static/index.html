@@ -623,9 +623,11 @@
   const CONTEXT_STEP = 512;
 
   const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v2';
+  const LEGACY_VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v1';
   let voiceOptions = null;
   let voiceMediaRecorder = null;
   let voiceMicStream = null;
+  let voiceAudioContext = null;
   let voicePttSessionId = 0;
   let voicePttShouldTranscribe = false;
   const DEFAULT_VOICE_SETTINGS = {
@@ -1509,11 +1511,21 @@
   // ── Voice Console ─────────────────────────────────────────
   function getVoiceSettings() {
     try {
-      const saved = JSON.parse(localStorage.getItem(VOICE_SETTINGS_KEY) || '{}');
-      return {
+      const currentJson = localStorage.getItem(VOICE_SETTINGS_KEY);
+      const legacyJson = currentJson ? null : localStorage.getItem(LEGACY_VOICE_SETTINGS_KEY);
+      const saved = JSON.parse(currentJson || legacyJson || '{}');
+      if (legacyJson && saved.tts && saved.tts.leading_silence_ms === 250) {
+        saved.tts.leading_silence_ms = DEFAULT_VOICE_SETTINGS.tts.leading_silence_ms;
+      }
+      const settings = {
         tts: { ...DEFAULT_VOICE_SETTINGS.tts, ...(saved.tts || {}) },
         stt: { ...DEFAULT_VOICE_SETTINGS.stt, ...(saved.stt || {}) },
       };
+      if (legacyJson) {
+        localStorage.setItem(VOICE_SETTINGS_KEY, JSON.stringify(settings));
+        localStorage.removeItem(LEGACY_VOICE_SETTINGS_KEY);
+      }
+      return settings;
     } catch {
       return JSON.parse(JSON.stringify(DEFAULT_VOICE_SETTINGS));
     }
@@ -1637,6 +1649,34 @@
     closeModal('voiceModal');
   }
 
+  function primeVoiceAudioOutput() {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return () => {};
+      if (!voiceAudioContext) voiceAudioContext = new AudioContextClass();
+      if (voiceAudioContext.state === 'suspended') void voiceAudioContext.resume().catch(() => {});
+
+      const oscillator = voiceAudioContext.createOscillator();
+      const gain = voiceAudioContext.createGain();
+      oscillator.frequency.value = 20;
+      gain.gain.value = 0.00001;
+      oscillator.connect(gain);
+      gain.connect(voiceAudioContext.destination);
+      oscillator.start();
+
+      let stopped = false;
+      return () => {
+        if (stopped) return;
+        stopped = true;
+        try { oscillator.stop(); } catch {}
+        oscillator.disconnect();
+        gain.disconnect();
+      };
+    } catch {
+      return () => {};
+    }
+  }
+
   function waitForAudioReady(player) {
     if (player.readyState >= HTMLMediaElement.HAVE_ENOUGH_DATA) return Promise.resolve();
     return new Promise((resolve) => {
@@ -1663,6 +1703,7 @@
   async function generateVoiceSpeech() {
     const text = document.getElementById('voiceText').value.trim();
     if (!text) { toast('Enter text to speak', 'error'); return; }
+    const stopAudioWake = primeVoiceAudioOutput();
     const btn = document.getElementById('voiceSpeakBtn');
     const player = document.getElementById('voicePlayer');
     const settings = getVoiceSettings();
@@ -1682,6 +1723,7 @@
     } catch (err) {
       toast(formatErrorMessage(err), 'error');
     } finally {
+      stopAudioWake();
       btn.disabled = false;
       btn.textContent = 'Generate Speech';
     }
