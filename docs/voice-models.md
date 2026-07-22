@@ -1,6 +1,6 @@
 # Warpgate Voice Models Manifest
 
-Last updated: 2026-06-11
+Last updated: 2026-07-21
 
 This manifest records Phase 2 voice-layer assets for Giga-Brain. Voice support is intentionally CLI-first before any Warpgate UI integration.
 
@@ -72,6 +72,47 @@ printf 'Warpgate voice test. Power overwhelming.' | \
 
 ```bash
 rm -rf /home/greg/voice-arsenal/piper /home/greg/voice-arsenal/piper-voices
+```
+
+## Additional installed Piper voice — Norman Medium
+
+Installed 2026-07-21 as an optional voice; Amy remains the default.
+
+- Voice ID: `en_US-norman-medium`
+- Language: U.S. English
+- Speaker: male, single speaker
+- Quality: medium
+- Sample rate: 22,050 Hz
+- Dataset: approximately 15.5 hours of LibriVox recordings
+- Dataset license: public domain
+- Training: trained from scratch, avoiding dependency on the separately licensed Lessac training set
+- Model card: `/home/greg/voice-arsenal/piper-voices/en_US-norman-medium.MODEL_CARD`
+- Model: `/home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx`
+- Config: `/home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx.json`
+- Verified sample: `/home/greg/voice-arsenal/samples/norman-warpgate-test.wav`
+
+SHA256:
+
+```text
+b9739443232a80a59c7d18810dd856899bf16a7964725f5ab81ea49b1351cb71  en_US-norman-medium.onnx
+6c2db7f558a4a8deb9fe822583c1c5105f6c4e834dd0f9de8ad17a888ee9fe1d  en_US-norman-medium.onnx.json
+```
+
+Live Warpgate verification:
+
+```text
+The Warpgate is online. -> The warp gate is online.
+Power overwhelming. -> Power overwhelming.
+```
+
+Rollback removes only the optional Norman assets and leaves Amy untouched:
+
+```bash
+rm /home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx \
+   /home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx.json \
+   /home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx.sha256 \
+   /home/greg/voice-arsenal/piper-voices/en_US-norman-medium.onnx.json.sha256 \
+   /home/greg/voice-arsenal/piper-voices/en_US-norman-medium.MODEL_CARD
 ```
 
 ## Deferred voice candidate
