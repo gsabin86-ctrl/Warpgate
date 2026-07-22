@@ -195,6 +195,25 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('Math.min(Math.max(stepped, min), max)', normalize)
         self.assertNotIn('Math.round(clamped / CONTEXT_STEP)', normalize)
 
+    def test_chat_requests_are_cancelable_and_do_not_follow_mutable_modal_state(self):
+        ui = self.read_ui()
+        start = ui.index('// ── Chat modal')
+        end = ui.index('// ── Voice Console', start)
+        chat = ui[start:end]
+
+        self.assertIn('let chatAbortController = null', ui)
+        self.assertIn('function cancelActiveChatRequest()', chat)
+        self.assertIn('chatAbortController.abort()', chat)
+        self.assertIn('const requestPort = currentChatPort', chat)
+        self.assertIn('const requestModel = currentChatModel', chat)
+        self.assertIn('const requestHistory = chatHistories[requestPort]', chat)
+        self.assertIn('signal: requestController.signal', chat)
+        self.assertIn('fetch(`/api/instances/${requestPort}/chat`', chat)
+        self.assertIn("if (id === 'chatModal') cancelActiveChatRequest()", ui)
+        self.assertIn('data.message?.thinking', chat)
+        self.assertNotIn('chatHistories[currentChatPort].push', chat)
+        self.assertNotIn('fetch(`/api/instances/${currentChatPort}/chat`', chat)
+
     def test_cards_do_not_translate_or_animate_on_hover(self):
         ui = self.read_ui()
         start = ui.index('/* ── Cards ── */')
