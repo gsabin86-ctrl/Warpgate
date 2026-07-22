@@ -596,6 +596,7 @@
   let loadCatalog = [];
   let currentInstances = [];
   let selectedModelMetadata = null;
+  let settingsModelMetadata = null;
   let currentLogsPort = null;
   let currentChatPort = null;
   let currentChatModel = null;
@@ -609,19 +610,22 @@
     11437: 'Accounting',
   };
 
+  const CONTEXT_MIN = 512;
+  const CONTEXT_DEFAULT = 8192;
+  const CONTEXT_HARD_MAX = 262144;
+  const CONTEXT_FALLBACK_MAX = 32768;
+  const CONTEXT_STEP = 512;
+  const CONTEXT_SETTINGS_MIGRATION_KEY = 'warpgate_context_default_v2';
+
   const DEFAULT_SETTINGS = {
     temperature: 0.8,
     top_p: 0.9,
     top_k: 40,
     repeat_penalty: 1.1,
-    num_ctx: 2048,
+    num_ctx: CONTEXT_DEFAULT,
     seed: -1,
     system: '',
   };
-
-  const CONTEXT_MIN = 512;
-  const CONTEXT_FALLBACK_MAX = 131072;
-  const CONTEXT_STEP = 512;
 
   const VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v2';
   const LEGACY_VOICE_SETTINGS_KEY = 'warpgate_voice_settings_v1';
@@ -660,6 +664,23 @@
 
   function saveSettingsToStorage(port, settings) {
     localStorage.setItem(`ollama_settings_${port}`, JSON.stringify(settings));
+  }
+
+  function migrateLegacyContextDefaults() {
+    try {
+      if (localStorage.getItem(CONTEXT_SETTINGS_MIGRATION_KEY)) return;
+      for (let port = 11434; port <= 11499; port += 1) {
+        const key = `ollama_settings_${port}`;
+        const raw = localStorage.getItem(key);
+        if (!raw) continue;
+        const saved = JSON.parse(raw);
+        if (saved.num_ctx === 2048) {
+          saved.num_ctx = CONTEXT_DEFAULT;
+          localStorage.setItem(key, JSON.stringify(saved));
+        }
+      }
+      localStorage.setItem(CONTEXT_SETTINGS_MIGRATION_KEY, '1');
+    } catch {}
   }
 
   function hasSavedSettings(port) {
@@ -1079,7 +1100,7 @@
   function contextBoundsForSelectedModel() {
     const modelMax = Number(selectedModelMetadata && selectedModelMetadata.context_length);
     const max = Number.isFinite(modelMax) && modelMax >= CONTEXT_MIN
-      ? Math.min(modelMax, CONTEXT_FALLBACK_MAX)
+      ? Math.min(modelMax, CONTEXT_HARD_MAX)
       : CONTEXT_FALLBACK_MAX;
     return {
       min: CONTEXT_MIN,
@@ -1303,17 +1324,33 @@
     return Math.min(Math.max(stepped, min), max);
   }
 
+  async function refreshSettingsModelMetadata(port, model) {
+    settingsModelMetadata = null;
+    if (!model) return null;
+    try {
+      const r = await fetch(`/api/instances/${port}/model-metadata?model=${encodeURIComponent(model)}`);
+      const d = await r.json();
+      if (!r.ok) throw new Error(formatErrorMessage(d.detail || d || 'Failed'));
+      settingsModelMetadata = d;
+      return d;
+    } catch {
+      return null;
+    }
+  }
+
   function contextBoundsForPort(port) {
     const inst = findInstance(port);
-    const modelMax = Number(inst?.context_length);
+    const metadataMatches = settingsModelMetadata?.port === port
+      && settingsModelMetadata?.model === inst?.loaded_model;
+    const modelMax = Number(metadataMatches ? settingsModelMetadata?.context_length : null);
     const max = Number.isFinite(modelMax) && modelMax >= CONTEXT_MIN
-      ? Math.min(modelMax, CONTEXT_FALLBACK_MAX)
+      ? Math.min(modelMax, CONTEXT_HARD_MAX)
       : CONTEXT_FALLBACK_MAX;
     return {
       min: CONTEXT_MIN,
       max,
       step: CONTEXT_STEP,
-      source: inst?.loaded_model && modelMax ? inst.loaded_model : 'fallback',
+      source: metadataMatches && modelMax ? inst.loaded_model : 'fallback',
     };
   }
 
@@ -1337,7 +1374,9 @@
     help.textContent = `Range: ${bounds.min.toLocaleString()}–${bounds.max.toLocaleString()} tokens (${source})`;
   }
 
-  function openSettings(port) {
+  async function openSettings(port) {
+    const inst = findInstance(port);
+    await refreshSettingsModelMetadata(port, inst?.loaded_model);
     const s = getSettings(port);
     document.getElementById('settingsPort').textContent = port;
     document.getElementById('settingsPortVal').value = port;
@@ -1376,9 +1415,9 @@
     toast('Settings saved', 'success');
   }
 
-  function resetSettings() {
+  async function resetSettings() {
     const port = parseInt(document.getElementById('settingsPortVal').value);
-    openSettings(port);  // Re-open with defaults replaced
+    await openSettings(port);  // Re-open with defaults replaced
     SLIDER_FIELDS.filter(k => k !== 'num_ctx').forEach(k => {
       document.getElementById(`s_${k}`).value  = DEFAULT_SETTINGS[k];
       document.getElementById(`sv_${k}`).value = DEFAULT_SETTINGS[k];
@@ -1911,6 +1950,7 @@
   });
 
   // ── Boot ──────────────────────────────────────────────────
+  migrateLegacyContextDefaults();
   checkMainStatus();
   loadModels();
   refreshTelemetry();

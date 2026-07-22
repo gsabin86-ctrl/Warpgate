@@ -167,6 +167,28 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('color: var(--text)', ui)
         self.assertIn('.form-select option:checked, .model-select option:checked', ui)
 
+    def test_context_defaults_and_ranges_use_model_metadata(self):
+        ui = self.read_ui()
+        start = ui.index('// ── Settings modal')
+        end = ui.index('// ── Chat modal', start)
+        settings = ui[start:end]
+
+        self.assertIn('const CONTEXT_DEFAULT = 8192', ui)
+        self.assertIn('const CONTEXT_HARD_MAX = 262144', ui)
+        self.assertIn('const CONTEXT_FALLBACK_MAX = 32768', ui)
+        self.assertIn('num_ctx: CONTEXT_DEFAULT', ui)
+        self.assertIn("const CONTEXT_SETTINGS_MIGRATION_KEY = 'warpgate_context_default_v2'", ui)
+        self.assertIn('function migrateLegacyContextDefaults()', ui)
+        self.assertIn('saved.num_ctx === 2048', ui)
+        self.assertIn('saved.num_ctx = CONTEXT_DEFAULT', ui)
+        self.assertIn('let settingsModelMetadata = null', ui)
+        self.assertIn('async function refreshSettingsModelMetadata(port, model)', settings)
+        self.assertIn('/model-metadata?model=', settings)
+        self.assertIn('async function openSettings(port)', settings)
+        self.assertIn('await refreshSettingsModelMetadata(port, inst?.loaded_model)', settings)
+        self.assertIn('settingsModelMetadata?.context_length', settings)
+        self.assertNotIn('const modelMax = Number(inst?.context_length)', settings)
+
     def test_context_length_uses_slider_controls(self):
         ui = self.read_ui()
 

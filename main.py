@@ -633,7 +633,7 @@ class RuntimeOptions(BaseModel):
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
     top_k: Optional[int] = Field(None, ge=1, le=1000)
     repeat_penalty: Optional[float] = Field(None, ge=0.1, le=5.0)
-    num_ctx: Optional[int] = Field(None, ge=512, le=131072)
+    num_ctx: Optional[int] = Field(None, ge=512, le=262144)
     seed: Optional[int] = Field(None, ge=-1, le=2147483647)
 
 

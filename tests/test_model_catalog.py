@@ -60,6 +60,18 @@ class ModelCatalogTests(unittest.TestCase):
 
         self.assertNotIn("options", payload)
 
+    def test_runtime_options_accept_model_context_up_to_hard_limit(self):
+        options = main.RuntimeOptions(
+            temperature=None,
+            top_p=None,
+            top_k=None,
+            repeat_penalty=None,
+            num_ctx=262144,
+            seed=None,
+        )
+
+        self.assertEqual(options.num_ctx, 262144)
+
     def test_runtime_options_reject_unbounded_context(self):
         with self.assertRaises(Exception):
             main.RuntimeOptions(
@@ -67,7 +79,7 @@ class ModelCatalogTests(unittest.TestCase):
                 top_p=None,
                 top_k=None,
                 repeat_penalty=None,
-                num_ctx=999999,
+                num_ctx=262145,
                 seed=None,
             )
 
