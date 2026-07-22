@@ -195,24 +195,32 @@ class UiStaticTests(unittest.TestCase):
         self.assertIn('Math.min(Math.max(stepped, min), max)', normalize)
         self.assertNotIn('Math.round(clamped / CONTEXT_STEP)', normalize)
 
-    def test_chat_requests_are_cancelable_and_do_not_follow_mutable_modal_state(self):
+    def test_chat_requests_are_per_port_and_continue_when_modal_closes(self):
         ui = self.read_ui()
         start = ui.index('// ── Chat modal')
         end = ui.index('// ── Voice Console', start)
         chat = ui[start:end]
+        close_start = ui.index('function closeModal(id)')
+        close_end = ui.index("document.querySelectorAll('.overlay')", close_start)
+        close_modal = ui[close_start:close_end]
 
-        self.assertIn('let chatAbortController = null', ui)
-        self.assertIn('function cancelActiveChatRequest()', chat)
-        self.assertIn('chatAbortController.abort()', chat)
+        self.assertIn('let chatRequests = {};', ui)
+        self.assertIn('function activeChatRequest(port)', chat)
+        self.assertIn('function cancelActiveChatRequest(port = currentChatPort)', chat)
+        self.assertIn('activeRequest.controller.abort()', chat)
         self.assertIn('const requestPort = currentChatPort', chat)
         self.assertIn('const requestModel = currentChatModel', chat)
         self.assertIn('const requestHistory = chatHistories[requestPort]', chat)
-        self.assertIn('signal: requestController.signal', chat)
+        self.assertIn('chatRequests[requestPort] = requestState', chat)
+        self.assertIn('signal: requestState.controller.signal', chat)
         self.assertIn('fetch(`/api/instances/${requestPort}/chat`', chat)
-        self.assertIn("if (id === 'chatModal') cancelActiveChatRequest()", ui)
+        self.assertIn('const activeRequest = activeChatRequest(port)', chat)
+        self.assertIn('activeRequest?.status', chat)
         self.assertIn('data.message?.thinking', chat)
+        self.assertNotIn('let chatStreaming = false', ui)
         self.assertNotIn('chatHistories[currentChatPort].push', chat)
         self.assertNotIn('fetch(`/api/instances/${currentChatPort}/chat`', chat)
+        self.assertNotIn('cancelActiveChatRequest()', close_modal)
 
     def test_cards_do_not_translate_or_animate_on_hover(self):
         ui = self.read_ui()

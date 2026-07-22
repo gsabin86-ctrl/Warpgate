@@ -472,7 +472,7 @@
         <h3 style="margin-bottom:2px">Chat</h3>
         <div class="chat-meta" id="chatMeta"></div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="clearChat()">Clear</button>
+      <button class="btn btn-ghost btn-sm" id="chatClearBtn" onclick="clearChat()">Clear</button>
     </div>
 
     <div class="chat-log" id="chatLog">
@@ -600,9 +600,7 @@
   let currentChatPort = null;
   let currentChatModel = null;
   let chatHistories = {};   // port -> [{role, content}]
-  let chatStreaming = false;
-  let chatStreamingPort = null;
-  let chatAbortController = null;
+  let chatRequests = {};    // port -> {controller, status, thinkingChars}
 
   const PORT_ROLES = {
     11434: 'Main / Default',
@@ -1394,25 +1392,30 @@
   // ── Chat modal ────────────────────────────────────────────
   function setChatUiBusy(busy, status = '') {
     document.getElementById('chatSendBtn').disabled = busy;
+    document.getElementById('chatClearBtn').disabled = busy;
     document.getElementById('chatCancelBtn').style.display = busy ? 'inline-flex' : 'none';
     document.getElementById('chatStatus').textContent = status;
   }
 
-  function cancelActiveChatRequest() {
-    if (chatAbortController && !chatAbortController.signal.aborted) chatAbortController.abort();
-    chatAbortController = null;
-    chatStreaming = false;
-    chatStreamingPort = null;
-    setChatUiBusy(false);
+  function activeChatRequest(port) {
+    return port ? chatRequests[port] || null : null;
+  }
+
+  function cancelActiveChatRequest(port = currentChatPort) {
+    const activeRequest = activeChatRequest(port);
+    if (!activeRequest) return;
+    if (!activeRequest.controller.signal.aborted) activeRequest.controller.abort();
+    if (chatRequests[port] === activeRequest) delete chatRequests[port];
+    if (currentChatPort === port) setChatUiBusy(false);
   }
 
   function openChat(port, model) {
-    if (chatAbortController) cancelActiveChatRequest();
     currentChatPort  = port;
     currentChatModel = model;
     document.getElementById('chatMeta').textContent = `:${port} · ${model}`;
     document.getElementById('chatInput').value = '';
-    setChatUiBusy(false);
+    const activeRequest = activeChatRequest(port);
+    setChatUiBusy(Boolean(activeRequest), activeRequest?.status || '');
     renderChatLog();
     document.getElementById('chatModal').classList.add('open');
     setTimeout(() => document.getElementById('chatInput').focus(), 50);
@@ -1450,13 +1453,13 @@
   }
 
   async function sendChat() {
-    if (chatStreaming) return;
     const input = document.getElementById('chatInput');
     const text  = input.value.trim();
     if (!text || !currentChatPort || !currentChatModel) return;
 
     const requestPort = currentChatPort;
     const requestModel = currentChatModel;
+    if (activeChatRequest(requestPort)) return;
     if (!chatHistories[requestPort]) chatHistories[requestPort] = [];
     const requestHistory = chatHistories[requestPort];
     const assistantMessage = { role: 'assistant', content: '' };
@@ -1475,18 +1478,20 @@
       options: buildRuntimeOptions(settings),
     };
 
-    const requestController = new AbortController();
-    chatAbortController = requestController;
-    chatStreaming = true;
-    chatStreamingPort = requestPort;
-    setChatUiBusy(true, 'generating…');
+    const requestState = {
+      controller: new AbortController(),
+      status: 'generating…',
+      thinkingChars: 0,
+    };
+    chatRequests[requestPort] = requestState;
+    setChatUiBusy(true, requestState.status);
 
     try {
       const r = await fetch(`/api/instances/${requestPort}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: requestController.signal,
+        signal: requestState.controller.signal,
       });
       if (!r.ok) throw new Error(`Chat request failed (${r.status})`);
 
@@ -1494,7 +1499,6 @@
       const decoder = new TextDecoder();
       let buf = '';
       let full = '';
-      let thinkingChars = 0;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -1507,23 +1511,25 @@
           const data = JSON.parse(line);
           if (data.error) throw new Error(data.error);
           if (data.message?.thinking) {
-            thinkingChars += data.message.thinking.length;
-            if (currentChatPort === requestPort && chatAbortController === requestController) {
-              document.getElementById('chatStatus').textContent = `thinking… (${thinkingChars.toLocaleString()} chars)`;
+            requestState.thinkingChars += data.message.thinking.length;
+            requestState.status = `thinking… (${requestState.thinkingChars.toLocaleString()} chars)`;
+            if (currentChatPort === requestPort && activeChatRequest(requestPort) === requestState) {
+              document.getElementById('chatStatus').textContent = requestState.status;
             }
           }
           if (data.message?.content) {
             full += data.message.content;
             assistantMessage.content = full;
+            requestState.status = 'responding…';
             if (currentChatPort === requestPort) {
-              document.getElementById('chatStatus').textContent = 'responding…';
+              document.getElementById('chatStatus').textContent = requestState.status;
               renderChatLog();
             }
           }
         }
       }
 
-      if (!full && thinkingChars > 0) {
+      if (!full && requestState.thinkingChars > 0) {
         assistantMessage.content = '[Model finished thinking without returning an answer.]';
         if (currentChatPort === requestPort) renderChatLog();
       }
@@ -1537,10 +1543,8 @@
       }
       if (currentChatPort === requestPort) renderChatLog();
     } finally {
-      if (chatAbortController === requestController) {
-        chatAbortController = null;
-        chatStreaming = false;
-        chatStreamingPort = null;
+      if (chatRequests[requestPort] === requestState) {
+        delete chatRequests[requestPort];
         if (currentChatPort === requestPort) setChatUiBusy(false);
       }
     }
@@ -1891,7 +1895,6 @@
   // ── Modal helpers ─────────────────────────────────────────
   function closeModal(id) {
     if (id === 'voiceModal') stopVoicePushToTalk(false);
-    if (id === 'chatModal') cancelActiveChatRequest();
     document.getElementById(id).classList.remove('open');
     if (id === 'logsModal') currentLogsPort = null;
     if (id === 'chatModal') { currentChatPort = null; currentChatModel = null; }
